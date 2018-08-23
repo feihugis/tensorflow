@@ -140,7 +140,12 @@ TEST_F(SummaryImageOpTest, OneColorImage4dInput) {
 
   // Check the output size.
   Tensor* out_tensor = GetOutput(0);
+
   ASSERT_EQ(0, out_tensor->dims());
+  //out_tensor->tensor<uint8, 3>();
+  std::cout<<"============++++++++++++============="<<std::endl;
+  std::cout << out_tensor->DebugString() <<std::endl;
+
   Summary summary;
   ParseProtoUnlimited(&summary, out_tensor->scalar<string>()());
 

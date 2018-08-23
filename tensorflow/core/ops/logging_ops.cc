@@ -80,6 +80,8 @@ REGISTER_OP("ImageSummary")
     .Input("tag: string")
     .Input("tensor: T")
     .Output("summary: string")
+    .Attr("vmin: int >= 0 = 0")
+    .Attr("vmax: int >= 0 = 255")
     .Attr("max_images: int >= 1 = 3")
     .Attr("T: {uint8, float, half, float64} = DT_FLOAT")
     .Attr(
