@@ -48,11 +48,13 @@ static void EXPECT_SummaryMatches(const Summary& actual,
 // --------------------------------------------------------------------------
 class SummaryImageOpTest : public OpsTestBase {
  protected:
-  void MakeOp(int max_images) {
+  void MakeOp(int max_images, float vmin, float vmax) {
     TF_ASSERT_OK(NodeDefBuilder("myop", "ImageSummary")
                      .Input(FakeInput())
                      .Input(FakeInput())
                      .Attr("max_images", max_images)
+                     .Attr("vmin", vmin)
+                     .Attr("vmax", vmax)
                      .Finalize(node_def()));
     TF_ASSERT_OK(InitOp());
   }
@@ -60,6 +62,10 @@ class SummaryImageOpTest : public OpsTestBase {
   void CheckAndRemoveEncodedImages(Summary* summary) {
     for (int i = 0; i < summary->value_size(); ++i) {
       Summary::Value* value = summary->mutable_value(i);
+      TF_CHECK_OK(WriteStringToFile(
+          Env::Default(), strings::StrCat("/tmp/", value->tag(), ".png"),
+          value->image().encoded_image_string()));
+
       ASSERT_TRUE(value->has_image()) << "No image for value: " << value->tag();
       ASSERT_FALSE(value->image().encoded_image_string().empty())
           << "No encoded_image_string for value: " << value->tag();
@@ -75,7 +81,9 @@ class SummaryImageOpTest : public OpsTestBase {
 };
 
 TEST_F(SummaryImageOpTest, ThreeGrayImagesOutOfFive4dInput) {
-  MakeOp(3 /* max images */);
+  MakeOp(3 /* max images */,
+         0.0f /* vmin*/,
+         255.0f /* vmax*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});
@@ -98,7 +106,9 @@ TEST_F(SummaryImageOpTest, ThreeGrayImagesOutOfFive4dInput) {
 }
 
 TEST_F(SummaryImageOpTest, OneGrayImage4dInput) {
-  MakeOp(1 /* max images */);
+  MakeOp(1 /* max images */,
+         0.0f /* vmin*/,
+         255.0f /* vmax*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});
@@ -118,7 +128,9 @@ TEST_F(SummaryImageOpTest, OneGrayImage4dInput) {
 }
 
 TEST_F(SummaryImageOpTest, OneColorImage4dInput) {
-  MakeOp(1 /* max images */);
+  MakeOp(1 /* max images */,
+         0.3f /* vmin*/,
+         1.0f /* vmax*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});

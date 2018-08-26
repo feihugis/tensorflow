@@ -34,20 +34,28 @@ class SummaryImageOp : public OpKernel {
 
   explicit SummaryImageOp(OpKernelConstruction* context) : OpKernel(context) {
     int64 max_images_tmp;
-    float vmin_tmp = 254.0f;
-    float vmax_tmp = 255.0f;
+
     OP_REQUIRES_OK(context, context->GetAttr("max_images", &max_images_tmp));
-    /*OP_REQUIRES_OK(context, context->GetAttr("vmin", &vmin_tmp));
-    OP_REQUIRES_OK(context, context->GetAttr("vmax", &vmax_tmp));*/
     OP_REQUIRES(context, max_images_tmp < (1LL << 31),
                 errors::InvalidArgument("max_images must be < 2^31"));
-    /*OP_REQUIRES(context, vmin_tmp < (1LL << 31),
-                errors::InvalidArgument("vmin must be < 2^31"));
-    OP_REQUIRES(context, vmax_tmp < (1LL << 31),
-                errors::InvalidArgument("vmax must be < 2^31"));*/
     max_images_ = static_cast<int32>(max_images_tmp);
-    vmin_ = static_cast<float>(vmin_tmp);
-    vmax_ = static_cast<float>(vmax_tmp);
+
+    has_vmin_ =
+        context->GetAttr("vmin", &vmin_).ok();
+    has_vmax_ =
+        context->GetAttr("vmax", &vmax_).ok();
+
+    if (!has_vmin_) {
+      vmin_ = -std::numeric_limits<float>::infinity();
+    }
+    if (!has_vmax_) {
+      vmax_ = std::numeric_limits<float>::infinity();
+    }
+
+    if (has_vmin_ && has_vmax_) {
+      OP_REQUIRES(context, vmin_ < vmax_,
+                  errors::InvalidArgument("vmin must be <= vmax"));
+    }
 
     const TensorProto* proto;
     OP_REQUIRES_OK(context, context->GetAttr("bad_color", &proto));
@@ -93,23 +101,17 @@ class SummaryImageOp : public OpKernel {
 
     Summary s;
     if (tensor.dtype() == DT_UINT8) {
-      // For uint8 input, no normalization is necessary
-      auto ith_image = [&tensor, batch_size, hw, depth](int i) {
-        auto values = tensor.shaped<uint8, 3>({batch_size, hw, depth});
-        return typename TTypes<uint8>::ConstMatrix(
-            &values(i, 0, 0), Eigen::DSizes<Eigen::DenseIndex, 2>(hw, depth));
-      };
-      OP_REQUIRES_OK(
-          c, AddImages(base_tag, batch_size, w, h, depth, ith_image, &s));
+      NormalizeAndAddImages<uint8>(c, tensor, h, w, hw, depth, batch_size,
+                                   vmin_, vmax_, base_tag, &s);
     } else if (tensor.dtype() == DT_HALF) {
       NormalizeAndAddImages<Eigen::half>(c, tensor, h, w, hw, depth, batch_size,
-                                         base_tag, &s);
+                                         vmin_, vmax_, base_tag, &s);
     } else if (tensor.dtype() == DT_FLOAT) {
       NormalizeAndAddImages<float>(c, tensor, h, w, hw, depth, batch_size,
-                                   base_tag, &s);
+                                   vmin_, vmax_, base_tag, &s);
     } else {  // tensor.dtype() = DT_DOUBLE
       NormalizeAndAddImages<double>(c, tensor, h, w, hw, depth, batch_size,
-                                    base_tag, &s);
+                                    vmin_, vmax_, base_tag, &s);
     }
 
     Tensor* summary_tensor = nullptr;
@@ -121,6 +123,7 @@ class SummaryImageOp : public OpKernel {
   template <class T>
   void NormalizeAndAddImages(OpKernelContext* c, const Tensor& tensor, int h,
                              int w, int hw, int depth, int batch_size,
+                             float vmin, float vmax,
                              const string& base_tag, Summary* s) {
     // For float and half images, nans and infs are replaced with bad_color.
     OP_REQUIRES(c, bad_color_.dim_size(0) >= depth,
@@ -132,9 +135,6 @@ class SummaryImageOp : public OpKernel {
 
     // Float images must be scaled and translated.
     Uint8Image image(hw, depth);
-
-    const float vmin = static_cast<float>(vmin_);
-    const float vmax = static_cast<float>(vmax_);
 
     auto ith_image = [&tensor, &image, bad_color, batch_size, hw,
                       depth, vmin, vmax](int i) {
@@ -195,6 +195,7 @@ class SummaryImageOp : public OpKernel {
                                   typename TTypes<T>::ConstMatrix values,
                                   typename TTypes<uint8>::ConstVec bad_color,
                                   Uint8Image* image) {
+    CHECK(vmin <= vmax);
     if (!image->size()) return;  // Nothing to do for empty images
 
     // Rescale the image to uint8 range.
@@ -215,19 +216,21 @@ class SummaryImageOp : public OpKernel {
     float image_min =  std::numeric_limits<float>::infinity();
     float image_max = -image_min;
 
-    for (int i = 0; i < hw; i++) {
-      bool finite = true;
-      for (int j = 0; j < depth; j++) {
-        if (!Eigen::numext::isfinite(values(i, j))) {
-          finite = false;
-          break;
-        }
-      }
-      if (finite) {
+    if (vmin == -std::numeric_limits<float>::infinity() || vmax == std::numeric_limits<float>::infinity()) {
+      for (int i = 0; i < hw; i++) {
+        bool finite = true;
         for (int j = 0; j < depth; j++) {
-          float value(values(i, j));
-          image_min = std::min(image_min, value);
-          image_max = std::max(image_max, value);
+          if (!Eigen::numext::isfinite(values(i, j))) {
+            finite = false;
+            break;
+          }
+        }
+        if (finite) {
+          for (int j = 0; j < depth; j++) {
+            float value(values(i, j));
+            image_min = std::min(image_min, value);
+            image_max = std::max(image_max, value);
+          }
         }
       }
     }
@@ -235,11 +238,9 @@ class SummaryImageOp : public OpKernel {
     image_min = (vmin != -std::numeric_limits<float>::infinity())? vmin : image_min;
     image_max = (vmax != std::numeric_limits<float>::infinity())? vmax : image_max;
 
-
-
     // Pick an affine transform into uint8
     const float kZeroThreshold = 1e-6;
-    T scale, offset;
+    T scale, offset, image_min_t, image_max_t;
     if (image_min < 0) {
       float max_val = std::max(std::abs(image_min), std::abs(image_max));
       scale = T(max_val < kZeroThreshold ? 0.0f : 127.0f / max_val);
@@ -249,35 +250,40 @@ class SummaryImageOp : public OpKernel {
       offset = T(0.0f);
     }
 
-    //const T vmin_ = static_cast<T>(vmin);
-    //const T vmax_ = static_cast<T>(vmax);
-
+    image_min_t = T(image_min);
+    image_max_t = T(image_max);
 
     // Transform image, turning nonfinite values to bad_color
     for (int i = 0; i < hw; i++) {
       bool finite = true;
+      bool in_range = true;
       for (int j = 0; j < depth; j++) {
         if (!Eigen::numext::isfinite(values(i, j))) {
           finite = false;
           break;
         }
-      }
-      if (finite) {
-        Eigen::Tensor<T, 1, Eigen::RowMajor> tmp = values.template chip<0>(i);
-
-        for (int j = 0; j < depth; j++) {
-          float value(values(i, j));
-          if (value < vmin) {
-            T vv(vmin);
-            tmp(j) = vv;
-          }
-          if (value > vmax) {
-            T vv(vmax);
-            tmp(j) = vv;
-          }
+        if (values(i, j) < image_min_t || values(i, j) > image_max_t) {
+          in_range = false;
         }
-        image->chip<0>(i) = (tmp * scale + offset)
-                                .template cast<uint8>();
+      }
+
+      if (finite) {
+        if (in_range) {
+          image->chip<0>(i) = (values.template chip<0>(i) * scale + offset)
+                                  .template cast<uint8>();
+        } else {
+          Eigen::Tensor<T, 1, Eigen::RowMajor> tmp_chip = values.template chip<0>(i);
+          for (int j = 0; j < depth; j++) {
+            if (values(i, j) < image_min_t) {
+              tmp_chip(j) = image_min_t;
+            }
+            if (values(i, j) > image_max_t) {
+              tmp_chip(j) = image_max_t;
+            }
+          }
+          image->chip<0>(i) = (tmp_chip * scale + offset)
+              .template cast<uint8>();
+        }
       } else {
         image->chip<0>(i) = bad_color;
       }
@@ -286,6 +292,8 @@ class SummaryImageOp : public OpKernel {
 
  private:
   int32 max_images_;
+  bool has_vmin_;
+  bool has_vmax_;
   float vmin_;
   float vmax_;
   Tensor bad_color_;
