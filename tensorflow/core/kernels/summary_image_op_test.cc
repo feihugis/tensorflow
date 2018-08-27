@@ -53,8 +53,8 @@ class SummaryImageOpTest : public OpsTestBase {
                      .Input(FakeInput())
                      .Input(FakeInput())
                      .Attr("max_images", max_images)
-                     .Attr("vmin", vmin)
-                     .Attr("vmax", vmax)
+                    /* .Attr("vmin", vmin)
+                     .Attr("vmax", vmax)*/
                      .Finalize(node_def()));
     TF_ASSERT_OK(InitOp());
   }
@@ -129,8 +129,8 @@ TEST_F(SummaryImageOpTest, OneGrayImage4dInput) {
 
 TEST_F(SummaryImageOpTest, OneColorImage4dInput) {
   MakeOp(1 /* max images */,
-         0.3f /* vmin*/,
-         1.0f /* vmax*/);
+         0.013f /* vmin*/,
+         0.017f /* vmax*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});
