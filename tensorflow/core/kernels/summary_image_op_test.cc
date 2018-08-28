@@ -48,13 +48,14 @@ static void EXPECT_SummaryMatches(const Summary& actual,
 // --------------------------------------------------------------------------
 class SummaryImageOpTest : public OpsTestBase {
  protected:
-  void MakeOp(int max_images, float vmin, float vmax) {
+  void MakeOp(int max_images, float vmin, float vmax, float clip) {
     TF_ASSERT_OK(NodeDefBuilder("myop", "ImageSummary")
                      .Input(FakeInput())
                      .Input(FakeInput())
                      .Attr("max_images", max_images)
-                    /* .Attr("vmin", vmin)
-                     .Attr("vmax", vmax)*/
+                     .Attr("vmin", vmin)
+                     .Attr("vmax", vmax)
+                     .Attr("clip", clip)
                      .Finalize(node_def()));
     TF_ASSERT_OK(InitOp());
   }
@@ -83,7 +84,8 @@ class SummaryImageOpTest : public OpsTestBase {
 TEST_F(SummaryImageOpTest, ThreeGrayImagesOutOfFive4dInput) {
   MakeOp(3 /* max images */,
          0.0f /* vmin*/,
-         255.0f /* vmax*/);
+         255.0f /* vmax*/,
+         true /*clip*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});
@@ -108,7 +110,8 @@ TEST_F(SummaryImageOpTest, ThreeGrayImagesOutOfFive4dInput) {
 TEST_F(SummaryImageOpTest, OneGrayImage4dInput) {
   MakeOp(1 /* max images */,
          0.0f /* vmin*/,
-         255.0f /* vmax*/);
+         255.0f /* vmax*/,
+         true /*clip*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});
@@ -130,7 +133,8 @@ TEST_F(SummaryImageOpTest, OneGrayImage4dInput) {
 TEST_F(SummaryImageOpTest, OneColorImage4dInput) {
   MakeOp(1 /* max images */,
          0.013f /* vmin*/,
-         0.017f /* vmax*/);
+         0.017f /* vmax*/,
+         true /*clip*/);
 
   // Feed and run
   AddInputFromArray<string>(TensorShape({}), {"tag"});
@@ -154,9 +158,6 @@ TEST_F(SummaryImageOpTest, OneColorImage4dInput) {
   Tensor* out_tensor = GetOutput(0);
 
   ASSERT_EQ(0, out_tensor->dims());
-  //out_tensor->tensor<uint8, 3>();
-  std::cout<<"============++++++++++++============="<<std::endl;
-  std::cout << out_tensor->DebugString() <<std::endl;
 
   Summary summary;
   ParseProtoUnlimited(&summary, out_tensor->scalar<string>()());

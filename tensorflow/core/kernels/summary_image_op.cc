@@ -41,13 +41,21 @@ class SummaryImageOp : public OpKernel {
                 errors::InvalidArgument("max_images must be < 2^31"));
     max_images_ = static_cast<int32>(max_images_tmp);
 
-    OP_REQUIRES_OK(context, context->GetAttr("vmin", &vmin_));
-    OP_REQUIRES_OK(context, context->GetAttr("vmax", &vmax_));
-    OP_REQUIRES_OK(context, context->GetAttr("clip", &clip_));
+    float vmin_tmp, vmax_tmp;
+    bool clip_tmp;
 
-    if (!isnan(vmin_) && !isnan(vmax_)) {
+    OP_REQUIRES_OK(context, context->GetAttr("vmin", &vmin_tmp));
+    OP_REQUIRES_OK(context, context->GetAttr("vmax", &vmax_tmp));
+    OP_REQUIRES_OK(context, context->GetAttr("clip", &clip_tmp));
+
+    vmin_ = static_cast<float>(vmin_tmp);
+    vmax_ = static_cast<float>(vmax_tmp);
+    clip_ = static_cast<bool>(clip_tmp);
+
+
+    if (vmin_ != default_val_ && vmax_ != default_val_) {
       OP_REQUIRES(context, vmin_ <= vmax_,
-                  errors::InvalidArgument("vmin must be <= vmax", std::to_string(vmin_), std::to_string(vmax_)));
+                  errors::InvalidArgument("vmin must be <= vmax"));
     }
 
     const TensorProto* proto;
@@ -190,9 +198,8 @@ class SummaryImageOp : public OpKernel {
                                   typename TTypes<uint8>::ConstVec bad_color,
                                   Uint8Image* image) {
 
-    if (!isnan(vmin) && !isnan(vmax)) {
-      CHECK(vmin <= vmax);
-    }
+    CHECK(vmin <= vmax);
+
     if (!image->size()) return;  // Nothing to do for empty images
 
     // Rescale the image to uint8 range.
@@ -213,7 +220,7 @@ class SummaryImageOp : public OpKernel {
     float image_min =  std::numeric_limits<float>::infinity();
     float image_max = -image_min;
 
-    if (isnan(vmin) || isnan(vmax)) {
+    if (vmin != default_val_ || vmax != default_val_) {
       for (int i = 0; i < hw; i++) {
         bool finite = true;
         for (int j = 0; j < depth; j++) {
@@ -232,8 +239,8 @@ class SummaryImageOp : public OpKernel {
       }
     }
 
-    image_min = isnan(vmin)? image_min : vmin;
-    image_max = isnan(vmax)? image_max : vmax;
+    image_min = vmin == default_val_? image_min : vmin;
+    image_max = vmax == default_val_? image_max : vmax;
 
     // Pick an affine transform into uint8
     const float kZeroThreshold = 1e-6;
@@ -291,6 +298,7 @@ class SummaryImageOp : public OpKernel {
   int32 max_images_;
   float vmin_;
   float vmax_;
+  static constexpr const float default_val_ = 9999.99f;
   bool clip_;
   Tensor bad_color_;
 };

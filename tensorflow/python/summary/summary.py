@@ -93,7 +93,7 @@ def scalar(name, tensor, collections=None, family=None):
 
 
 @tf_export('summary.image')
-def image(name, tensor, max_outputs=3, vmin=0, vmax=255, collections=None, family=None):
+def image(name, tensor, max_outputs=3, vmin=None, vmax=None, clip=False, collections=None, family=None):
   """Outputs a `Summary` protocol buffer with images.
 
   The summary has up to `max_outputs` summary values containing images. The
@@ -129,6 +129,10 @@ def image(name, tensor, max_outputs=3, vmin=0, vmax=255, collections=None, famil
     tensor: A 4-D `uint8` or `float32` `Tensor` of shape `[batch_size, height,
       width, channels]` where `channels` is 1, 3, or 4.
     max_outputs: Max number of batch elements to generate images for.
+    vmin: Maximum clipping value.
+    vmax: Minimum clipping value.
+    clip: boolen value; if True, the value of images will be clipped by `vmin`
+      and `vmax`; otherwise, not.
     collections: Optional list of ops.GraphKeys.  The collections to add the
       summary to.  Defaults to [_ops.GraphKeys.SUMMARIES]
     family: Optional; if provided, used as the prefix of the summary tag name,
@@ -143,7 +147,7 @@ def image(name, tensor, max_outputs=3, vmin=0, vmax=255, collections=None, famil
   with _summary_op_util.summary_scope(
       name, family, values=[tensor]) as (tag, scope):
     val = _gen_logging_ops.image_summary(
-        tag=tag, tensor=tensor, max_images=max_outputs, vmin=vmin, vmax=vmax, name=scope)
+        tag=tag, tensor=tensor, max_images=max_outputs, vmin=vmin, vmax=vmax, clip=clip, name=scope)
     _summary_op_util.collect(val, collections, [_ops.GraphKeys.SUMMARIES])
   return val
 
