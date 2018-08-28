@@ -24,8 +24,8 @@ limitations under the License.
 #include "tensorflow/core/lib/png/png_io.h"
 #include "tensorflow/core/platform/logging.h"
 
-#include <iostream>
 #include <cmath>
+#include <iostream>
 
 namespace tensorflow {
 
@@ -51,7 +51,6 @@ class SummaryImageOp : public OpKernel {
     vmin_ = static_cast<float>(vmin_tmp);
     vmax_ = static_cast<float>(vmax_tmp);
     clip_ = static_cast<bool>(clip_tmp);
-
 
     if (vmin_ != default_val_ && vmax_ != default_val_) {
       OP_REQUIRES(context, vmin_ <= vmax_,
@@ -120,7 +119,6 @@ class SummaryImageOp : public OpKernel {
     CHECK(s.SerializeToString(&summary_tensor->scalar<string>()()));
   }
 
-
   template <class T>
   void NormalizeAndAddImages(OpKernelContext* c, const Tensor& tensor, int h,
                              int w, int hw, int depth, int batch_size,
@@ -137,13 +135,14 @@ class SummaryImageOp : public OpKernel {
     // Float images must be scaled and translated.
     Uint8Image image(hw, depth);
 
-    auto ith_image = [&tensor, &image, bad_color, batch_size, hw,
-                      depth, vmin, vmax, clip](int i) {
+    auto ith_image = [&tensor, &image, bad_color, batch_size, hw, depth, vmin,
+                      vmax, clip](int i) {
       auto tensor_eigen = tensor.template shaped<T, 3>({batch_size, hw, depth});
       typename TTypes<T>::ConstMatrix values(
           &tensor_eigen(i, 0, 0),
           Eigen::DSizes<Eigen::DenseIndex, 2>(hw, depth));
-      NormalizeFloatImage<T>(hw, depth, vmin, vmax, clip, values, bad_color, &image);
+      NormalizeFloatImage<T>(hw, depth, vmin, vmax, clip, values, bad_color,
+                             &image);
       return image;
     };
     OP_REQUIRES_OK(c,
@@ -191,13 +190,11 @@ class SummaryImageOp : public OpKernel {
   }
 
   template <class T>
-  static void NormalizeFloatImage(int hw, int depth,
-                                  float vmin, float vmax,
+  static void NormalizeFloatImage(int hw, int depth, float vmin, float vmax,
                                   bool clip,
                                   typename TTypes<T>::ConstMatrix values,
                                   typename TTypes<uint8>::ConstVec bad_color,
                                   Uint8Image* image) {
-
     CHECK(vmin <= vmax);
 
     if (!image->size()) return;  // Nothing to do for empty images
@@ -217,7 +214,7 @@ class SummaryImageOp : public OpKernel {
     // range across different instances of the tensor.
 
     // Compute min and max ignoring nonfinite pixels
-    float image_min =  std::numeric_limits<float>::infinity();
+    float image_min = std::numeric_limits<float>::infinity();
     float image_max = -image_min;
 
     if (vmin != default_val_ || vmax != default_val_) {
@@ -239,8 +236,8 @@ class SummaryImageOp : public OpKernel {
       }
     }
 
-    image_min = vmin == default_val_? image_min : vmin;
-    image_max = vmax == default_val_? image_max : vmax;
+    image_min = vmin == default_val_ ? image_min : vmin;
+    image_max = vmax == default_val_ ? image_max : vmax;
 
     // Pick an affine transform into uint8
     const float kZeroThreshold = 1e-6;
@@ -272,8 +269,9 @@ class SummaryImageOp : public OpKernel {
       }
 
       if (finite) {
-        if ( clip && in_range) {
-          Eigen::Tensor<T, 1, Eigen::RowMajor> chip_tmp = values.template chip<0>(i);
+        if (clip && in_range) {
+          Eigen::Tensor<T, 1, Eigen::RowMajor> chip_tmp =
+              values.template chip<0>(i);
           for (int j = 0; j < depth; j++) {
             if (values(i, j) < image_min_t) {
               chip_tmp(j) = image_min_t;
@@ -282,11 +280,11 @@ class SummaryImageOp : public OpKernel {
               chip_tmp(j) = image_max_t;
             }
           }
-          image->chip<0>(i) = (chip_tmp * scale + offset)
-              .template cast<uint8>();
+          image->chip<0>(i) =
+              (chip_tmp * scale + offset).template cast<uint8>();
         } else {
           image->chip<0>(i) = (values.template chip<0>(i) * scale + offset)
-              .template cast<uint8>();
+                                  .template cast<uint8>();
         }
       } else {
         image->chip<0>(i) = bad_color;
