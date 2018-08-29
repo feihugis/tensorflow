@@ -89,7 +89,6 @@ class ScalarSummaryTest(test.TestCase):
         im = summary_lib.image('inner', i, max_outputs=3)
       summary_str = s.run(im)
     summary = summary_pb2.Summary()
-    print(summary, "-----------------------")
     summary.ParseFromString(summary_str)
     values = summary.value
     self.assertEqual(len(values), 3)
