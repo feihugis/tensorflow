@@ -89,6 +89,7 @@ class ScalarSummaryTest(test.TestCase):
         im = summary_lib.image('inner', i, max_outputs=3)
       summary_str = s.run(im)
     summary = summary_pb2.Summary()
+    print(summary, "-----------------------")
     summary.ParseFromString(summary_str)
     values = summary.value
     self.assertEqual(len(values), 3)
@@ -100,7 +101,8 @@ class ScalarSummaryTest(test.TestCase):
     with self.cached_session() as s:
       i = array_ops.ones((5, 2, 3, 1))
       with ops.name_scope('outer'):
-        im = summary_lib.image('inner', i, max_outputs=3, family='family')
+        im = summary_lib.image('inner', i, max_outputs=3, vmin=1.0, vmax=1.0,
+                               clip=True, family='family')
         self.assertEquals(im.op.name, 'outer/family/inner')
       summary_str = s.run(im)
     summary = summary_pb2.Summary()

@@ -269,7 +269,7 @@ class SummaryImageOp : public OpKernel {
       }
 
       if (finite) {
-        if (clip && in_range) {
+        if (clip && !in_range) {
           Eigen::Tensor<T, 1, Eigen::RowMajor> chip_tmp =
               values.template chip<0>(i);
           for (int j = 0; j < depth; j++) {
