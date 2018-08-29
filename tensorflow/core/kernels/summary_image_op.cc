@@ -24,9 +24,6 @@ limitations under the License.
 #include "tensorflow/core/lib/png/png_io.h"
 #include "tensorflow/core/platform/logging.h"
 
-#include <cmath>
-#include <iostream>
-
 namespace tensorflow {
 
 class SummaryImageOp : public OpKernel {
