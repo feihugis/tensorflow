@@ -93,7 +93,8 @@ def scalar(name, tensor, collections=None, family=None):
 
 
 @tf_export('summary.image')
-def image(name, tensor, max_outputs=3, vmin=None, vmax=None, clip=False, collections=None, family=None):
+def image(name, tensor, max_outputs=3, vmin=None, vmax=None, clip=False,
+          collections=None, family=None):
   """Outputs a `Summary` protocol buffer with images.
 
   The summary has up to `max_outputs` summary values containing images. The
@@ -150,7 +151,8 @@ def image(name, tensor, max_outputs=3, vmin=None, vmax=None, clip=False, collect
   with _summary_op_util.summary_scope(
       name, family, values=[tensor]) as (tag, scope):
     val = _gen_logging_ops.image_summary(
-        tag=tag, tensor=tensor, max_images=max_outputs, vmin=vmin, vmax=vmax, clip=clip, name=scope)
+        tag=tag, tensor=tensor, max_images=max_outputs, vmin=vmin, vmax=vmax,
+        clip=clip, name=scope)
     _summary_op_util.collect(val, collections, [_ops.GraphKeys.SUMMARIES])
   return val
 

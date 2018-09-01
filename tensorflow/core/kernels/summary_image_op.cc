@@ -292,7 +292,8 @@ class SummaryImageOp : public OpKernel {
   int32 max_images_;
   float vmin_;
   float vmax_;
-  static constexpr const float default_val_ = 998244288.0f; //01001110011010111111111111111111
+  static constexpr const float default_val_ =
+      998244288.0f; //01001110011010111111111111111111
   bool clip_;
   Tensor bad_color_;
 };

@@ -168,9 +168,9 @@ TEST_F(SummaryImageOpTest, OneColorImage4dInput) {
 }
 
 TEST_F(SummaryImageOpTest, OneColorImage4dInputWithClip) {
-  MakeOpV2(1,    /* max images */
+  MakeOpV2(1,     /* max images */
            -2.0f, /*vmin*/
-           8.0f, /*vmax*/
+           8.0f,  /*vmax*/
            true /*clip*/);
 
   // Feed and run
@@ -180,12 +180,12 @@ TEST_F(SummaryImageOpTest, OneColorImage4dInputWithClip) {
       {
           /* r0, c0, RGB */ -1.1f, -2.5f, -3.9f,
           /* r0, c1, RGB */ -4.1f, -5.5f, -6.9f,
-          /* r1, c0, RGB */ 3.1f, 4.5f, 5.9f,
-          /* r1, c1, RGB */ 6.1f, 7.5f, 8.9f,
-          /* r2, c0, RGB */ 9.1f, 10.5f, 11.9f,
+          /* r1, c0, RGB */ 3.1f,  4.5f,  5.9f,
+          /* r1, c1, RGB */ 6.1f,  7.5f,  8.9f,
+          /* r2, c0, RGB */ 9.1f,  10.5f, 11.9f,
           /* r2, c1, RGB */ 12.1f, 16.5f, 26.9f,
-          /* r3, c0, RGB */ 17.1f, 7.5f, 27.9f,
-          /* r3, c1, RGB */ 12.1f, 8.5f, 28.9f,
+          /* r3, c0, RGB */ 17.1f, 7.5f,  27.9f,
+          /* r3, c1, RGB */ 12.1f, 8.5f,  28.9f,
           /* r4, c0, RGB */ 19.1f, 29.5f, 9.9f,
           /* r4, c1, RGB */ 21.1f, 12.5f, 10.9f,
       });
@@ -205,9 +205,9 @@ TEST_F(SummaryImageOpTest, OneColorImage4dInputWithClip) {
 }
 
 TEST_F(SummaryImageOpTest, OneColorImage4dInputWithoutClip) {
-  MakeOpV2(1,    /* max images */
+  MakeOpV2(1,     /* max images */
            -2.0f, /*vmin*/
-           8.0f, /*vmax*/
+           8.0f,  /*vmax*/
            false /*clip*/);
 
   // Feed and run
@@ -217,12 +217,12 @@ TEST_F(SummaryImageOpTest, OneColorImage4dInputWithoutClip) {
       {
           /* r0, c0, RGB */ -1.1f, -2.5f, -3.9f,
           /* r0, c1, RGB */ -4.1f, -5.5f, -6.9f,
-          /* r1, c0, RGB */ 3.1f, 4.5f, 5.9f,
-          /* r1, c1, RGB */ 6.1f, 7.5f, 8.9f,
-          /* r2, c0, RGB */ 9.1f, 10.5f, 11.9f,
+          /* r1, c0, RGB */ 3.1f,  4.5f,  5.9f,
+          /* r1, c1, RGB */ 6.1f,  7.5f,  8.9f,
+          /* r2, c0, RGB */ 9.1f,  10.5f, 11.9f,
           /* r2, c1, RGB */ 12.1f, 16.5f, 26.9f,
-          /* r3, c0, RGB */ 17.1f, 7.5f, 27.9f,
-          /* r3, c1, RGB */ 12.1f, 8.5f, 28.9f,
+          /* r3, c0, RGB */ 17.1f, 7.5f,  27.9f,
+          /* r3, c1, RGB */ 12.1f, 8.5f,  28.9f,
           /* r4, c0, RGB */ 19.1f, 29.5f, 9.9f,
           /* r4, c1, RGB */ 21.1f, 12.5f, 10.9f,
       });

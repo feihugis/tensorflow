@@ -128,22 +128,22 @@ class ScalarSummaryTest(test.TestCase):
       ims = []
       with ops.name_scope('outer'):
         im1 = summary_lib.image('inner', i, max_outputs=3, vmin=2.0, vmax=2.0,
-                               clip=True, family='family')
+                                clip=True, family='family')
         self.assertEquals(im1.op.name, 'outer/family/inner')
         ims.append(im1)
 
         im2 = summary_lib.image('inner', i, max_outputs=3, vmin=-2.0, vmax=20.0,
-                               clip=True, family='family')
+                                clip=True, family='family')
         self.assertEquals(im2.op.name, 'outer/family/inner_1')
         ims.append(im2)
 
         im3 = summary_lib.image('inner', i, max_outputs=3, vmin=-2.0, clip=True,
-                               family='family')
+                                family='family')
         self.assertEquals(im3.op.name, 'outer/family/inner_2')
         ims.append(im3)
 
         im4 = summary_lib.image('inner', i, max_outputs=3, vmax=20.0, clip=True,
-                               family='family')
+                                family='family')
         self.assertEquals(im4.op.name, 'outer/family/inner_3')
         ims.append(im4)
 
@@ -155,7 +155,7 @@ class ScalarSummaryTest(test.TestCase):
         self.assertEqual(len(values), 1)
         tags = sorted(v.tag for v in values)
         expected = sorted(['family/outer/family/inner_{}/image/0'.format(i)
-                          if i != 0 else 'family/outer/family/inner/image/0'])
+                           if i != 0 else 'family/outer/family/inner/image/0'])
         self.assertEqual(tags, expected)
 
   def testHistogramSummary(self):
