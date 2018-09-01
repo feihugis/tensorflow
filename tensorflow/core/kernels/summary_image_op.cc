@@ -49,10 +49,8 @@ class SummaryImageOp : public OpKernel {
     vmax_ = static_cast<float>(vmax_tmp);
     clip_ = static_cast<bool>(clip_tmp);
 
-    if (vmin_ != default_val_ && vmax_ != default_val_) {
-      OP_REQUIRES(context, vmin_ <= vmax_,
-                  errors::InvalidArgument("vmin must be <= vmax"));
-    }
+    /*OP_REQUIRES(context, vmin_ <= vmax_,
+                errors::InvalidArgument("vmin must be <= vmax"));*/
 
     const TensorProto* proto;
     OP_REQUIRES_OK(context, context->GetAttr("bad_color", &proto));
@@ -192,15 +190,14 @@ class SummaryImageOp : public OpKernel {
                                   typename TTypes<T>::ConstMatrix values,
                                   typename TTypes<uint8>::ConstVec bad_color,
                                   Uint8Image* image) {
-    CHECK(vmin <= vmax);
-
     if (!image->size()) return;  // Nothing to do for empty images
 
     // Rescale the image to uint8 range.
     //
-    // We are trying to generate an RGB image from a float/half tensor.  We do
-    // not have any info about the expected range of values in the tensor
-    // but the generated image needs to have all RGB values within [0, 255].
+    // We are trying to generate an RGB image within [0, 255] from a tensor.
+    // The expected range of values in the tensor can be specified by vmin and
+    // vmax. But if vmin or vmax is not given, they will be initialized from
+    // the min and max of the images with ignoring nonfinite pixels.
     //
     // We use two different algorithms to generate these values.  If the
     // tensor has only positive values we scale them all by 255/max(values).
@@ -210,7 +207,7 @@ class SummaryImageOp : public OpKernel {
     // This works for most cases, but does not respect the relative dynamic
     // range across different instances of the tensor.
 
-    // Compute min and max ignoring nonfinite pixels
+    // Compute the min and max of the input tensor
     float image_min = std::numeric_limits<float>::infinity();
     float image_max = -image_min;
 
@@ -235,6 +232,8 @@ class SummaryImageOp : public OpKernel {
 
     image_min = vmin == default_val_ ? image_min : vmin;
     image_max = vmax == default_val_ ? image_max : vmax;
+
+    CHECK(vmin <= vmax);
 
     // Pick an affine transform into uint8
     const float kZeroThreshold = 1e-6;
@@ -293,7 +292,7 @@ class SummaryImageOp : public OpKernel {
   int32 max_images_;
   float vmin_;
   float vmax_;
-  static constexpr const float default_val_ = 9999.99f;
+  static constexpr const float default_val_ = 998244288.0f; //01001110011010111111111111111111
   bool clip_;
   Tensor bad_color_;
 };
