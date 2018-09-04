@@ -211,7 +211,7 @@ class SummaryImageOp : public OpKernel {
     float image_min = std::numeric_limits<float>::infinity();
     float image_max = -image_min;
 
-    if (vmin != default_val_ || vmax != default_val_) {
+    if (vmin != -default_val_ || vmax != default_val_) {
       for (int i = 0; i < hw; i++) {
         bool finite = true;
         for (int j = 0; j < depth; j++) {
@@ -230,7 +230,7 @@ class SummaryImageOp : public OpKernel {
       }
     }
 
-    image_min = vmin == default_val_ ? image_min : vmin;
+    image_min = vmin == -default_val_ ? image_min : vmin;
     image_max = vmax == default_val_ ? image_max : vmax;
 
     CHECK(vmin <= vmax);
