@@ -49,9 +49,6 @@ class SummaryImageOp : public OpKernel {
     vmax_ = static_cast<float>(vmax_tmp);
     clip_ = static_cast<bool>(clip_tmp);
 
-    /*OP_REQUIRES(context, vmin_ <= vmax_,
-                errors::InvalidArgument("vmin must be <= vmax"));*/
-
     const TensorProto* proto;
     OP_REQUIRES_OK(context, context->GetAttr("bad_color", &proto));
     OP_REQUIRES_OK(context, context->device()->MakeTensorFromProto(
