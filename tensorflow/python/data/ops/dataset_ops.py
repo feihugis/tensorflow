@@ -2216,6 +2216,30 @@ def _warn_if_collections(transformation_name):
                   % transformation_name)
 
 
+class MatchingFilesDataset(Dataset):
+  """A `Dataset` that list the files according to the input patterns"""
+
+  def __init__(self, pattern):
+    super(MatchingFilesDataset, self).__init__()
+    self._pattern = ops.convert_to_tensor(
+      pattern, dtype=dtypes.string, name="pattern")
+
+
+  def _as_variant_tensor(self):
+    return gen_dataset_ops.matching_files_dataset(self._pattern)
+
+  @property
+  def output_classes(self):
+    return ops.Tensor
+
+  @property
+  def output_shapes(self):
+    return tensor_shape.scalar()
+
+  @property
+  def output_types(self):
+    return dtypes.string
+
 class MapDataset(Dataset):
   """A `Dataset` that maps a function over elements in its input."""
 
