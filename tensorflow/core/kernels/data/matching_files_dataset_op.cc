@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ namespace data {
 
 namespace {
 
-constexpr int kNumThreads = 8;
+constexpr int kNumThreads = 1;
 
 // Run a function in parallel using a ThreadPool, but skip the ThreadPool
 // on the iOS platform due to its problems with more than a few threads.
@@ -62,16 +62,14 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
 
   void MakeDataset(OpKernelContext* ctx, DatasetBase** output) override {
     const Tensor* patterns_t;
-    // NOTE(originally from ringwalt): Changing the input name "pattern" to
-    // "patterns" would break existing graphs.
-    OP_REQUIRES_OK(ctx, ctx->input("pattern", &patterns_t));
-    OP_REQUIRES(
+    OP_REQUIRES_OK(ctx, ctx->input("patterns", &patterns_t));
+    /*OP_REQUIRES(
         ctx,
         TensorShapeUtils::IsScalar(patterns_t->shape()) ||
             TensorShapeUtils::IsVector(patterns_t->shape()),
         errors::InvalidArgument(
             "Input patterns tensor must be scalar or vector, but had shape: ",
-            patterns_t->shape().DebugString()));
+            patterns_t->shape().DebugString()));*/
     const auto patterns = patterns_t->flat<string>();
     size_t num_patterns = static_cast<size_t >(patterns.size());
     std::vector<string> pattern_strs;
@@ -96,7 +94,7 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
         const string& prefix) const override {
       return std::unique_ptr<IteratorBase>(
-          new Iterator({this, strings::StrCat(prefix, "::FileName")}));
+          new Iterator({this, strings::StrCat(prefix, "::MatchingFiles")}));
     }
 
     const DataTypeVector& output_dtypes() const override {
@@ -118,9 +116,9 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
     Status AsGraphDefInternal(SerializationContext* ctx,
                               DatasetGraphDefBuilder* b,
                               Node** output) const override {
-      Node* pattern = nullptr;
-      TF_RETURN_IF_ERROR(b->AddVector(pattern_, &pattern));
-      TF_RETURN_IF_ERROR(b->AddDataset(this, {pattern}, output));
+      Node* patterns_node = nullptr;
+      TF_RETURN_IF_ERROR(b->AddVector(pattern_, &patterns_node));
+      TF_RETURN_IF_ERROR(b->AddDataset(this, {patterns_node}, output));
       return Status::OK();
     }
 
@@ -138,14 +136,14 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
 
         while (!filepath_queue_.empty() ||
             current_pattern_index_ < dataset()->pattern_.size()) {
-          // all the elements in the heap will be the matched file name or the
-          // potential directory
+          // All the elements in the heap will be the matched filename or the
+          // potential directory.
           if (!filepath_queue_.empty()) {
             string cur_file = filepath_queue_.top();
             filepath_queue_.pop();
 
-            // we can also use isDectory() here. But IsDirectory call can be
-            // expensive for some FS
+            // We can also use isDectory() here. But IsDirectory call can be
+            // expensive for some FS.
             if (ctx->env()->MatchPath(cur_file, current_pattern_)){
               Tensor filepath_tensor(ctx->allocator({}), DT_STRING, {});
               filepath_tensor.scalar<string>()() = cur_file;
@@ -154,20 +152,20 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
               return Status::OK();
             }
 
-            // in this case, cur_file is a directory. Then create a sub-pattern
-            // to continue the search
+            // In this case, cur_file is a directory. Then create a sub-pattern
+            // to continue the search.
             size_t pos = current_pattern_.find_first_of("*?[\\");
             size_t len = current_pattern_.size() - pos;
             string cur_pattern_suffix = current_pattern_.substr(pos, len);
             string sub_pattern = strings::StrCat(cur_file,
                                                  "/",
                                                  cur_pattern_suffix);
-            Status s = UpdateIterator(ctx->env(), sub_pattern);
+            Status s = UpdateIterator(ctx, sub_pattern);
             ret.Update(s);
           } else {
             // search a new pattern
             current_pattern_ = dataset()->pattern_[current_pattern_index_];
-            Status s = UpdateIterator(ctx->env(), current_pattern_);
+            Status s = UpdateIterator(ctx, current_pattern_);
             ret.Update(s);
             ++current_pattern_index_;
           }
@@ -224,7 +222,7 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
       }
 
      private:
-      Status UpdateIterator(Env *env, const string &pattern)
+      Status UpdateIterator(IteratorContext* ctx, const string &pattern)
       EXCLUSIVE_LOCKS_REQUIRED(mu_) {
         string fixed_prefix = pattern.substr(0, pattern.find_first_of("*?[\\"));
         string eval_pattern = pattern;
@@ -239,14 +237,14 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
         }
 
         FileSystem* fs;
-        TF_RETURN_IF_ERROR(env->GetFileSystemForFile(dir, &fs));
+        TF_RETURN_IF_ERROR(ctx->env()->GetFileSystemForFile(dir, &fs));
 
         filepath_queue_.push(dir);
         Status ret;  //Status to return
-        // children_dir_status holds is_dir status for children. It can have three
-        // possible values: OK for true; FAILED_PRECONDITION for false; CANCELLED
-        // if we don't calculate IsDirectory (we might do that because there isn't
-        // any point in exploring that child path).
+        // children_dir_status holds is_dir status for children. It can have
+        // three possible values: OK for true; FAILED_PRECONDITION for false;
+        // CANCELLED if we don't calculate IsDirectory (we might do that because
+        // there isn't any point in exploring that child path).
 
         // DFS to find the first element in the iterator
         while (!filepath_queue_.empty()) {
@@ -263,7 +261,7 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
           // it to the heap and finish the search; otherwise, continue the next
           // search
           if (children.empty()) {
-            if (env->MatchPath(cur_dir, current_pattern_)) {
+            if (ctx->env()->MatchPath(cur_dir, current_pattern_)) {
               filepath_queue_.push(cur_dir);
               return ret;
             } else {
@@ -302,7 +300,7 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
             } else {
               // this case will be a file; if the file match the pattern, push
               // it to the heap; otherwise, ignore it
-              if (env->MatchPath(child_dir_path, eval_pattern)) {
+              if (ctx->env()->MatchPath(child_dir_path, eval_pattern)) {
                 filepath_queue_.push(child_dir_path);
               }
             }
@@ -311,9 +309,15 @@ class MatchingFilesDatasetOp : public DatasetOpKernel {
         return ret;
       }
 
+      /*void ForEach(IteratorContext* ctx, int first, int last,
+          const std::function<void(int)>& f) {
+        for (int i = first; i < last ; ++i) {
+          (*ctx->runner())([f, i] {f(i);});
+        }
+      }*/
+
       mutex mu_;
-      //std::unique_ptr<std::priority_queue<string>> filepath_queue_ GUARDED_BY(mu_);
-      std::priority_queue<string> filepath_queue_ GUARDED_BY(mu_); // = new std::priority_queue<string>;
+      std::priority_queue<string> filepath_queue_ GUARDED_BY(mu_);
       size_t current_pattern_index_ GUARDED_BY(mu_) = 0;
       string current_pattern_ GUARDED_BY(mu_);
     };

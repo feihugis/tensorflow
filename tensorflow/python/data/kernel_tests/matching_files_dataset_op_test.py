@@ -17,9 +17,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from os import path
+import os
+import time
 import shutil
 import tempfile
+import numpy as np
 
 from tensorflow.python.data.ops import iterator_ops
 from tensorflow.python.data.ops.dataset_ops import MatchingFilesDataset
@@ -27,29 +29,9 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.ops import array_ops
 from tensorflow.python.platform import test
 from tensorflow.python.util import compat
-from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.ops.gen_io_ops import matching_files
 from tensorflow.python.framework import errors
-
-import os
-import time
-from functools import partial
-
-
-def timeit(fn, msg, N=0):
-  start = time.time()
-  res = fn()
-  end = time.time()
-  runtime = (end - start) * 1000
-  msg = '{}: time: {:.2f} ms'.format(msg, runtime)
-  if N:
-    msg += ' ({:.2f} ms per iteration)'.format(runtime / N)
-  print(msg)
-  return res
-
-
-width = 32
-depth = 16
+from tensorflow.python.client import session
+from tensorflow.python.framework import ops
 
 
 class MatchingFilesDatasetTest(test.TestCase):
@@ -62,10 +44,10 @@ class MatchingFilesDatasetTest(test.TestCase):
 
   def _touchTempFiles(self, filenames):
     for filename in filenames:
-      open(path.join(self.tmp_dir, filename), 'a').close()
+      open(os.path.join(self.tmp_dir, filename), 'a').close()
 
   def testEmptyDirectory(self):
-    dataset = MatchingFilesDataset(path.join(self.tmp_dir, '*'))
+    dataset = MatchingFilesDataset(os.path.join(self.tmp_dir, '*'))
     with self.cached_session() as sess:
       next_element = dataset.make_one_shot_iterator().get_next()
       with self.assertRaises(errors.OutOfRangeError):
@@ -75,7 +57,7 @@ class MatchingFilesDatasetTest(test.TestCase):
     filenames = ['a', 'b', 'c']
     self._touchTempFiles(filenames)
 
-    dataset = MatchingFilesDataset(path.join(self.tmp_dir, '*'))
+    dataset = MatchingFilesDataset(os.path.join(self.tmp_dir, '*'))
     with self.cached_session() as sess:
       next_element = dataset.make_one_shot_iterator().get_next()
 
@@ -83,7 +65,7 @@ class MatchingFilesDatasetTest(test.TestCase):
       actual_filenames = []
       for filename in filenames:
         expected_filenames.append(
-          compat.as_bytes(path.join(self.tmp_dir, filename)))
+          compat.as_bytes(os.path.join(self.tmp_dir, filename)))
         actual_filenames.append(compat.as_bytes(sess.run(next_element)))
 
       self.assertItemsEqual(expected_filenames, actual_filenames)
@@ -94,14 +76,14 @@ class MatchingFilesDatasetTest(test.TestCase):
     filenames = ['a', 'b', 'c']
     self._touchTempFiles(filenames)
 
-    dataset = MatchingFilesDataset(path.join(self.tmp_dir, '*'))
+    dataset = MatchingFilesDataset(os.path.join(self.tmp_dir, '*'))
     with self.cached_session() as sess:
       next_element = dataset.make_one_shot_iterator().get_next()
       expected_filenames = []
       actual_filenames = []
       for filename in filenames:
         expected_filenames.append(
-          compat.as_bytes(path.join(self.tmp_dir, filename)))
+          compat.as_bytes(os.path.join(self.tmp_dir, filename)))
         actual_filenames.append(compat.as_bytes(sess.run(next_element)))
 
       self.assertItemsEqual(expected_filenames, actual_filenames)
@@ -112,14 +94,14 @@ class MatchingFilesDatasetTest(test.TestCase):
     filenames = ['a.txt', 'b.py', 'c.py', 'd.pyc']
     self._touchTempFiles(filenames)
 
-    dataset = MatchingFilesDataset(path.join(self.tmp_dir, '*.py'))
+    dataset = MatchingFilesDataset(os.path.join(self.tmp_dir, '*.py'))
     with self.cached_session() as sess:
       next_element = dataset.make_one_shot_iterator().get_next()
       expected_filenames = []
       actual_filenames = []
       for filename in filenames[1:-1]:
         expected_filenames.append(
-          compat.as_bytes(path.join(self.tmp_dir, filename)))
+          compat.as_bytes(os.path.join(self.tmp_dir, filename)))
         actual_filenames.append(compat.as_bytes(sess.run(next_element)))
 
       self.assertItemsEqual(expected_filenames, actual_filenames)
@@ -130,14 +112,14 @@ class MatchingFilesDatasetTest(test.TestCase):
     filenames = ['a.txt', 'b.py', 'c.pyc']
     self._touchTempFiles(filenames)
 
-    dataset = MatchingFilesDataset(path.join(self.tmp_dir, '*.py*'))
+    dataset = MatchingFilesDataset(os.path.join(self.tmp_dir, '*.py*'))
     with self.cached_session() as sess:
       next_element = dataset.make_one_shot_iterator().get_next()
       expected_filenames = []
       actual_filenames = []
       for filename in filenames[1:]:
         expected_filenames.append(
-          compat.as_bytes(path.join(self.tmp_dir, filename)))
+          compat.as_bytes(os.path.join(self.tmp_dir, filename)))
         actual_filenames.append(compat.as_bytes(sess.run(next_element)))
 
       self.assertItemsEqual(expected_filenames, actual_filenames)
@@ -145,7 +127,6 @@ class MatchingFilesDatasetTest(test.TestCase):
         sess.run(next_element)
 
   def testNestedDirectory(self):
-    self.maxDiff = None
     filenames = []
     width = 8
     depth = 4
@@ -178,6 +159,69 @@ class MatchingFilesDatasetTest(test.TestCase):
           break
 
       self.assertItemsEqual(expected_filenames, actual_filenames)
+
+
+class MatchingFilesDatasetBenchmark(test.Benchmark):
+
+  def benchmarkNestedDirectory(self):
+    tmp_dir = tempfile.mkdtemp()
+    width = 100
+    depth = 10
+    for i in range(width):
+      for j in range(depth):
+        new_base = os.path.join(tmp_dir, str(i),
+          *[str(dir_name) for dir_name in range(j)])
+        if not os.path.exists(new_base):
+          os.makedirs(new_base)
+        for f in ['a.txt', 'b.py', 'c.pyc']:
+          filename = os.path.join(new_base, f)
+          open(filename, 'w').close()
+
+    patterns = []
+    for i in range(depth):
+      pattern = '{}/{}/*.txt'.format(tmp_dir,
+        os.path.join(*['**' for _ in range(i + 1)]))
+      patterns.append(pattern)
+
+    deltas = []
+    iters = 3
+    for _ in range(iters):
+      with ops.Graph().as_default():
+        dataset = MatchingFilesDataset(patterns)
+        next_element = dataset.make_one_shot_iterator().get_next()
+
+        with session.Session() as sess:
+          sub_deltas = []
+          while True:
+            try:
+              start = time.time()
+              sess.run(next_element)
+              end = time.time()
+              sub_deltas.append(end - start)
+            except errors.OutOfRangeError:
+              break
+          deltas.append(sub_deltas)
+
+    median_deltas = np.median(deltas, axis=0)
+    print("Nested directory size (width*depth): %d*%d Median wall time: "
+          "%fs (read first filename), %fs (read second filename), avg %fs"
+          " (read %d more filenames)" % (width, depth,
+                                         median_deltas[0],
+                                         median_deltas[1],
+                                         np.average(median_deltas[2:]),
+                                         len(median_deltas) - 2))
+    self.report_benchmark(
+        iters=iters,
+        wall_time=np.sum(median_deltas),
+        extras={"read first file:": median_deltas[0],
+                "read second file:": median_deltas[1],
+                "avg time for reading %d more filenames:" %
+                (len(median_deltas) - 2):
+                np.average(median_deltas[2:])},
+        name="benchmark_matching_files_dataset_nesteddirectory(%d*%d)" %
+             (width, depth))
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
