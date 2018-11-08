@@ -706,6 +706,8 @@ void TFE_Execute(TFE_Op* op, TFE_TensorHandle** retvals, int* num_retvals,
   for (int i = 0; i < *num_retvals; ++i) {
     retvals[i] = new TFE_TensorHandle(handle_retvals[i]);
   }
+  VLOG(1) << "****** Finish the execution of " << op->operation.Name()
+          << " with output: " << *num_retvals;
 }
 
 TFE_TensorHandle* TFE_TensorHandleCopyToDevice(TFE_TensorHandle* h,

@@ -172,6 +172,7 @@ class MaxPoolOp : public PoolingOp {
     auto pooling =
         xla::MaxPool(ctx->Input(0), ksize, stride, padding_,
                      XlaTensorFormat(data_format_, input_shape.dims() - 2));
+    VLOG(1) << "****** MaxPool compile";
     ctx->SetOutput(0, pooling);
   }
 };
@@ -195,7 +196,9 @@ REGISTER_XLA_OP(Name("MaxPoolV2")
 class MaxPool3DOp : public MaxPoolOp {
  public:
   explicit MaxPool3DOp(OpKernelConstruction* ctx)
-      : MaxPoolOp(ctx, /*num_spatial_dims=*/3) {}
+      : MaxPoolOp(ctx, /*num_spatial_dims=*/3) {
+    VLOG(1) << "****** Create MaxPool3DOp";
+  }
 };
 REGISTER_XLA_OP(Name("MaxPool3D"), MaxPool3DOp);
 

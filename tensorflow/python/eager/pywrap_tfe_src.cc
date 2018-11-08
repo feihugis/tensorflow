@@ -1622,6 +1622,8 @@ PyObject* TFE_Py_TapeGradient(PyObject* tape, PyObject* target,
                               PyObject* sources, PyObject* output_gradients,
                               PyObject* unconnected_gradients,
                               TF_Status* status) {
+  VLOG(1) << "****** Enter tensorflow/python/eager/pywrap_tfe_src.cc "
+             "TFE_Py_TapeGradient (1625)";
   TFE_Py_Tape* tape_obj = reinterpret_cast<TFE_Py_Tape*>(tape);
   if (!tape_obj->tape->IsPersistent()) {
     auto* tape_set = GetTapeSet();
@@ -1723,6 +1725,8 @@ PyObject* TFE_Py_TapeGradient(PyObject* tape, PyObject* target,
     }
     return py_result;
   }
+  VLOG(1) << "****** Finish tensorflow/python/eager/pywrap_tfe_src.cc "
+             "TFE_Py_TapeGradient (1705)";
   return PyList_New(0);
 }
 
@@ -2038,14 +2042,15 @@ PyObject* RecordGradient(PyObject* op_name, PyObject* inputs, PyObject* attrs,
     }
   }
   if (!should_record) Py_RETURN_NONE;
-
   string c_op_name = TFE_GetPythonString(op_name);
+  VLOG(1) << "****** RecordGradient Op name: " << c_op_name;
 
   PyObject* op_outputs;
   bool op_outputs_tuple_created = false;
   std::pair<bool, tensorflow::gtl::FlatSet<int>>* outputs_not_required;
 
   if (OpGradientDoesntRequireOutputIndices(c_op_name, &outputs_not_required)) {
+    VLOG(1) << "****** " << c_op_name << " OpGradient Doesn't Require Output Indices";
     if (outputs_not_required->first) {
       op_outputs = Py_None;
     } else {
@@ -2054,6 +2059,7 @@ PyObject* RecordGradient(PyObject* op_name, PyObject* inputs, PyObject* attrs,
           results, outputs_not_required->second);
     }
   } else {
+    VLOG(1) << "****** " << c_op_name << " OpGradient Requires Output Indices";
     op_outputs = results;
   }
 

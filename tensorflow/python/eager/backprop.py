@@ -123,6 +123,12 @@ def _gradient_function(op_name, attr_tuple, num_inputs, inputs, outputs,
   Returns:
     The gradients with respect to the inputs of the function, as a list.
   """
+  import traceback
+  try:
+    raise TypeError("Debug!")
+  except:
+    traceback.print_exc()
+
   mock_op = _MockOp(attr_tuple, inputs, outputs, op_name)
   grad_fn = ops._gradient_registry.lookup(op_name)  # pylint: disable=protected-access
   if grad_fn is None:

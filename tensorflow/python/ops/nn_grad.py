@@ -28,6 +28,8 @@ from tensorflow.python.ops import gen_nn_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 
+from tensorflow.python.platform import tf_logging as logging
+
 
 @ops.RegisterGradient("Conv2DBackpropInput")
 def _Conv2DBackpropInputGrad(op, grad):
@@ -177,14 +179,21 @@ def _AvgPool3DGradGrad(op, grad):
 
 @ops.RegisterGradient("MaxPool3D")
 def _MaxPool3DGrad(op, grad):
-  return gen_nn_ops.max_pool3d_grad(
+  import datetime
+  print(datetime.datetime.now(), ": I tensorflow/python/ops/nn_grad.py: 183] "
+      "****** Enter tensorflow/python/ops/nn_grad.py::_MaxPool3DGrad")
+  print("Input shape: ", op.inputs[0].get_shape())
+  print("Output shape: ", op.outputs[0].get_shape())
+  grad = gen_nn_ops.max_pool3d_grad(
       op.inputs[0],
-      op.outputs[0],
+      op.inputs[0],
       grad,
       ksize=op.get_attr("ksize"),
       strides=op.get_attr("strides"),
       padding=op.get_attr("padding"),
       data_format=op.get_attr("data_format"))
+  print("grad shape: ", grad.get_shape(), " : ", grad)
+  return grad
 
 
 @ops.RegisterGradient("MaxPool3DGrad")

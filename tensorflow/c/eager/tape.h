@@ -521,6 +521,9 @@ Status GradientTape<Gradient, BackwardFunction, TapeTensor>::ComputeGradient(
       continue;
     }
     auto trace = std::move(op_it->second);
+    VLOG(1) << "****** Start Backprop Trace for Op_type: " << trace.op_type
+            << "; target_tensor_ids size: " << target_tensor_ids.size()
+            << "; source_tensor_ids size: " << source_tensor_ids.size();
     state.op_tape.erase(op_it);
     std::vector<Gradient*> out_gradients;
     out_gradients.reserve(trace.output_tensor_info.size());
@@ -563,6 +566,7 @@ Status GradientTape<Gradient, BackwardFunction, TapeTensor>::ComputeGradient(
         trace.backward_function_deleter(trace.backward_function);
       }
       if (!s.ok()) {
+        VLOG(1) << "****** vspace.CallBackwardFunction status is not OK";
         cleanup();
         return s;
       }
@@ -638,6 +642,7 @@ Status GradientTape<Gradient, BackwardFunction, TapeTensor>::ComputeGradient(
         }
       }
     }
+    VLOG(1) << "****** Finish Backprop Trace for Op_type: " << trace.op_type;
   }
   CHECK(state.op_tape.empty());
   result->reserve(source_tensor_ids.size());
@@ -665,6 +670,8 @@ Status GradientTape<Gradient, BackwardFunction, TapeTensor>::ComputeGradient(
       }
     }
   }
+
+  VLOG(1) << "****** Finish ComputeGradient ";
   return Status::OK();
 }
 

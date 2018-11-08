@@ -328,6 +328,9 @@ Status EagerLocalExecute(EagerOperation* op,
     // TODO(apassos) track referenced tensors
   }
   retvals->resize(*num_retvals);
+  VLOG(1) << "****** Eager is in Async execution mode: " << ctx->Async();
+  VLOG(1) << "****** Op debug: "
+          << op->MutableAttrs()->BuildNodeDef().DebugString();
   if (ctx->Async()) {
     // Note that for async mode, execution order will make sure that all
     // input handles are ready before executing them.
@@ -684,8 +687,11 @@ Status EagerExecute(EagerOperation* op,
   bool op_is_local = IsLocal(op->EagerContext(), op->Device());
 
   if (op_is_local) {
+    VLOG(1) << "****** Execute locally";
     return EagerLocalExecute(op, retvals, num_retvals);
   }
+
+  VLOG(1) << "****** Execute Remotely";
 
   if (op->EagerContext()->LogDevicePlacement()) {
     LOG(INFO) << "Executing op " << op->Name() << " in device "
@@ -727,6 +733,7 @@ Status EagerExecute(EagerContext* ctx, Device* device,
     TF_RETURN_IF_ERROR(kernel->Run(container, &inputs, &outputs, maybe_stats,
                                    maybe_step_stats, graph_collector));
   }
+  VLOG(1) << "****** Op outputs: " + outputs[0].DebugString();
   if (maybe_stats != nullptr) {
     int64 nanos = Env::Default()->NowNanos();
     maybe_stats->set_op_end_rel_micros(nanos / EnvTime::kMicrosToNanos -
