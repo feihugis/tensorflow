@@ -183,7 +183,6 @@ def _MaxPool3DGrad(op, grad):
   print(datetime.datetime.now(), ": I tensorflow/python/ops/nn_grad.py: 183] "
       "****** Enter tensorflow/python/ops/nn_grad.py::_MaxPool3DGrad")
   print("Input shape: ", op.inputs[0].get_shape())
-  print("Output shape: ", op.outputs[0].get_shape())
   grad = gen_nn_ops.max_pool3d_grad(
       op.inputs[0],
       op.inputs[0],
