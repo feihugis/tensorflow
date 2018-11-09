@@ -787,8 +787,8 @@ class RegisterPFor(object):
     ...
 
   The above will register conversion function `_foo_converter` for handling
-  conversion of `foo_op_type`. During conversion, the registered functin will be
-  called with a single argument of type `PForInput` which will contain state
+  conversion of `foo_op_type`. During conversion, the registered function will
+  be called with a single argument of type `PForInput` which will contain state
   needed for the conversion.  This registered function should output a list of
   WrappedTensor object with the same length as the number of outputs of op being
   converted. If the op had zero outputs, then it should return a ops.Operation
