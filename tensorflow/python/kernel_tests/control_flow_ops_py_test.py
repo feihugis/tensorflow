@@ -1010,6 +1010,15 @@ class ControlFlowTest(test.TestCase):
       r = control_flow_ops.while_loop(c, b, [n], parallel_iterations=20)
       self.assertEqual(10000, self.evaluate(r))
 
+  def testWhile_configOption(self):
+    with self.cached_session():
+      n = constant_op.constant(0)
+      c = lambda x: False
+      b = lambda x: math_ops.add(x, 1)
+      r = control_flow_ops.while_loop(c, b, [n])
+      self.assertEqual(0, r.eval())
+
+
   @test_util.disable_control_flow_v2("b/79881896 (control deps)")
   def testWhileExternalControlDependencies(self):
     with self.cached_session():
