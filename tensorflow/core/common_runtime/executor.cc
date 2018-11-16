@@ -1484,6 +1484,7 @@ void ExecutorImpl::InitializePending(const Graph* graph,
 }
 
 void ExecutorState::RunAsync(Executor::DoneCallback done) {
+  VLOG(0) << "****** ExecutorState::RunAsync";
   const Graph* graph = impl_->graph_.get();
   TaggedNodeSeq ready;
 

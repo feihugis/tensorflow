@@ -463,6 +463,7 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
                                   CallFrameInterface* call_frame,
                                   ExecutorsAndKeys* executors_and_keys,
                                   RunMetadata* run_metadata) {
+  VLOG(0) << "****** DirectSession::RunInternal";
   const uint64 start_time_usecs = Env::Default()->NowMicros();
   string session_id_meta = strings::StrCat("SessionRun #id=", step_id, "#");
   tracing::ScopedActivity activity(session_id_meta);
@@ -513,6 +514,8 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
 
   // Start parallel Executors.
   const size_t num_executors = executors_and_keys->items.size();
+  VLOG(0) << "****** Create ExecutorBarrier with num of executors: "
+          << num_executors;
   ExecutorBarrier* barrier = new ExecutorBarrier(
       num_executors, run_state.rendez, [&run_state](const Status& ret) {
         {
@@ -601,7 +604,6 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
       run_options.inter_op_thread_pool() >= 0
           ? thread_pools_[run_options.inter_op_thread_pool()].first
           : nullptr;
-
   if (pool == nullptr) {
     // We allow using the caller thread only when having a single executor
     // specified.
@@ -729,6 +731,7 @@ Status DirectSession::Run(const RunOptions& run_options,
                           const std::vector<string>& target_nodes,
                           std::vector<Tensor>* outputs,
                           RunMetadata* run_metadata) {
+  VLOG(0) << "****** DirectSession::Run";
   TF_RETURN_IF_ERROR(CheckNotClosed());
   TF_RETURN_IF_ERROR(CheckGraphCreated("Run()"));
   direct_session_runs->GetCell()->IncrementBy(1);
@@ -1698,7 +1701,9 @@ void DirectSession::WaitForNotification(RunState* run_state,
     const int64 timeout_in_us = timeout_in_ms * 1000;
     const bool notified =
         WaitForNotificationWithTimeout(notification, timeout_in_us);
+    VLOG(0) << "****** Timeout notified: " << notified;
     if (!notified) {
+      VLOG(0) << "****** Timeout notified: " << notified;
       return Status(error::DEADLINE_EXCEEDED,
                     "Timed out waiting for notification");
     }

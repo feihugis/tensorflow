@@ -60,6 +60,7 @@ CancellationToken CancellationManager::get_cancellation_token() {
 
 bool CancellationManager::RegisterCallback(CancellationToken token,
                                            CancelCallback callback) {
+  VLOG(0) << "****** CancellationManager::RegisterCallback";
   mutex_lock l(mu_);
   CHECK_LT(token, next_cancellation_token_) << "Invalid cancellation token";
   bool should_register = !is_cancelled_ && !is_cancelling_;
@@ -70,6 +71,7 @@ bool CancellationManager::RegisterCallback(CancellationToken token,
 }
 
 bool CancellationManager::DeregisterCallback(CancellationToken token) {
+  VLOG(0) << "****** CancellationManager::DeregisterCallback";
   mu_.lock();
   if (is_cancelled_) {
     mu_.unlock();

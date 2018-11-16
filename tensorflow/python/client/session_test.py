@@ -77,7 +77,7 @@ class SessionTest(test_util.TensorFlowTestCase):
   def setUp(self):
     super(SessionTest, self).setUp()
     warnings.simplefilter('always')
-
+  '''
   def testUseExistingGraph(self):
     with ops.Graph().as_default() as g, ops.device('/cpu:0'):
       a = constant_op.constant(6.0, shape=[1, 1])
@@ -1820,20 +1820,22 @@ class SessionTest(test_util.TensorFlowTestCase):
       session.Session(config=37)
     with self.assertRaisesRegexp(TypeError, 'graph must be a tf.Graph'):
       session.Session(graph=37)
+  '''
 
   def testTimeoutWithShortOperations(self):
-    num_epochs = 5
+    num_epochs = 500000000
     q = data_flow_ops.FIFOQueue(capacity=50, dtypes=[dtypes.int32], shapes=[()])
     enqueue_op = q.enqueue_many(constant_op.constant([1, 2]))
 
     # Use a 10-second timeout, which should be longer than any
     # non-blocking enqueue_many op.
-    config = config_pb2.ConfigProto(operation_timeout_in_ms=10000)
+    config = config_pb2.ConfigProto(operation_timeout_in_ms=1)
     with session.Session(config=config) as sess:
       for _ in range(num_epochs):
         sess.run(enqueue_op)
       self.assertEqual(sess.run(q.size()), num_epochs * 2)
 
+  '''
   def testRegisterFetchAndFeedConversionFunctions(self):
 
     class SquaredTensor(object):
@@ -2016,6 +2018,7 @@ class SessionTest(test_util.TensorFlowTestCase):
           TypeError, 'Type of feed value 1 with type <(\w+) \'int\'> is not'):
         sess.run(a, feed_dict={a: 1})
 
+  '''
 
 if __name__ == '__main__':
   googletest.main()

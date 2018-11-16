@@ -780,6 +780,8 @@ static void TF_Run_Helper(
     }
 
     RunMetadata run_metadata_proto;
+    VLOG(0) << "****** Start session->Run() with run_option : "
+            << run_options_proto.DebugString();
     result = session->Run(run_options_proto, input_pairs, output_tensor_names,
                           target_oper_names, &outputs, &run_metadata_proto);
 
@@ -790,6 +792,7 @@ static void TF_Run_Helper(
     }
   } else {
     // NOTE(zongheng): PRun does not support RunOptions yet.
+    VLOG(0) << "****** Start session->PRun()";
     result = session->PRun(handle, input_pairs, output_tensor_names, &outputs);
   }
   if (!result.ok()) {

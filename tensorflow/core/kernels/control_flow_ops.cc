@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/control_flow_ops.h"
 
+//#include "tensorflow/core/framework/cancellation.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -601,6 +602,22 @@ LoopCondOp::LoopCondOp(OpKernelConstruction* context) : OpKernel(context) {}
 LoopCondOp::~LoopCondOp() = default;
 
 void LoopCondOp::Compute(OpKernelContext* context) {
+  CancellationManager* cm = context->cancellation_manager();
+  CancellationToken token = cm->get_cancellation_token();
+  bool already_cancelled;
+
+  already_cancelled = !cm->RegisterCallback(token, [this, cm, token]() {});
+  VLOG(0) << "****** Already cancelled: " << already_cancelled;
+  VLOG(0) << "****** LoopCondOp condition: " << context->input(0).DebugString();
+
+  if (already_cancelled) {
+    VLOG(0) << "****** Cancelled by timeout ";
+    Tensor timeout(DT_BOOL, TensorShape({}));
+    timeout.flat<bool>()(0) = false;
+    context->set_output(0, timeout);
+    VLOG(0) << "****** Cancelled by timeout ";
+    return;
+  }
   context->set_output(0, context->input(0));
 }
 

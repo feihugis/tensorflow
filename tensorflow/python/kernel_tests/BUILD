@@ -1577,6 +1577,31 @@ cuda_py_test(
 )
 
 tf_py_test(
+    name = "while_loop_timeout_py_test",
+    size = "small",
+    srcs = ["while_loop_timeout_py_test.py"],
+    additional_deps = [
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:client",
+        "//tensorflow/python:control_flow_ops",
+        "//tensorflow/python:data_flow_ops",
+        "//tensorflow/python:errors",
+        "//tensorflow/python:framework",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:platform_test",
+        "//tensorflow/python:state_ops",
+        "//tensorflow/python:training",
+        "//tensorflow/python:util",
+        "//tensorflow/python:variables",
+        "//third_party/py/numpy",
+        "@six_archive//:six",
+    ],
+)
+
+
+tf_py_test(
     name = "control_flow_util_test",
     size = "small",
     srcs = ["control_flow_util_test.py"],

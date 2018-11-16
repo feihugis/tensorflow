@@ -173,6 +173,7 @@ string AddPrefixToNodeName(const string& name, const string& prefix) {
 
 bool ExecuteWithTimeout(std::function<void()> fn, const int64 timeout_in_ms,
                         thread::ThreadPool* const thread_pool) {
+  VLOG(0) << "****** ExecuteWithTimeout: " << timeout_in_ms;
   if (timeout_in_ms <= 0) {
     fn();
     return true;

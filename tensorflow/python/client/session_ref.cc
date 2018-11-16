@@ -424,6 +424,7 @@ Status SessionRef::Run(const RunOptions& run_options,
                        const std::vector<string>& target_node_names,
                        std::vector<Tensor>* outputs,
                        RunMetadata* run_metadata) {
+  VLOG(0) << "****** SessionRef::Run";
   LOG_AND_RUN_OPERATION(Run, run_options, inputs, output_tensor_names,
                         target_node_names, outputs, run_metadata);
 }

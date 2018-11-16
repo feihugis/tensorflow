@@ -1010,13 +1010,19 @@ class ControlFlowTest(test.TestCase):
       r = control_flow_ops.while_loop(c, b, [n], parallel_iterations=20)
       self.assertEqual(10000, self.evaluate(r))
 
+  @test_util.disable_control_flow_v2("b/116630618 (Times out)")
   def testWhile_configOption(self):
-    with self.cached_session():
+    import os
+    os.environ['TF_CPP_MIN_VLOG_LEVEL'] = '4'
+    config = config_pb2.ConfigProto(operation_timeout_in_ms=10000)
+    with self.cached_session(config=config) as sess:
+      run_options = config_pb2.RunOptions(timeout_in_ms=23)
       n = constant_op.constant(0)
-      c = lambda x: False
+      c = lambda x: True
       b = lambda x: math_ops.add(x, 1)
       r = control_flow_ops.while_loop(c, b, [n])
-      self.assertEqual(0, r.eval())
+      ret = sess.run(r, options=run_options)
+      self.assertEqual(1000, ret)
 
 
   @test_util.disable_control_flow_v2("b/79881896 (control deps)")
