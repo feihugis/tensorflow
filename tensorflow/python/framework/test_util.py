@@ -973,6 +973,7 @@ def run_in_graph_and_eager_modes(func=None,
         pass
 
       def run_eagerly(self, **kwargs):
+        print("****** run eager test")
         if not use_gpu:
           with ops.device("/device:CPU:0"):
             f(self, *args, **kwargs)
