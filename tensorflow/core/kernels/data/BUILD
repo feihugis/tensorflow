@@ -344,6 +344,16 @@ tf_kernel_library(
     ],
 )
 
+tf_cc_test(
+    name = "range_dataset_op_test",
+    size = "small",
+    srcs = ["range_dataset_op_test.cc"],
+    deps = [
+        ":iterator_ops",
+        "//tensorflow/core:testlib",
+    ],
+)
+
 tf_kernel_library(
     name = "shuffle_dataset_op",
     srcs = ["shuffle_dataset_op.cc"],
