@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/data/iterator_ops.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
 #include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/util/ptr_util.h"
 
 namespace tensorflow {
 namespace data {
@@ -31,188 +32,179 @@ class RangeDatasetOpTest : public OpsTestBase {
   ~RangeDatasetOpTest() override {
     gtl::STLDeleteElements(&tensors_);
     gtl::STLDeleteElements(&managed_outputs_);
-    context_.reset(nullptr);
-    params_.reset(nullptr);
-    device_mgr_.reset(nullptr);
-    delete flr_;
-    lib_def_.reset(nullptr);
-    pflr_.reset(nullptr);
-    delete &fdef_lib_;
-    delete thread_pool_;
-    delete &runner_;
-    delete dataset_;
-    delete iteratorContext_;
-    iterator_.reset(nullptr);
+    dataset_->Unref();
   }
+
   Status InitOp() { return InitOpWithGraphVersion(TF_GRAPH_DEF_VERSION); }
 
   // Only use this directly if you have a deprecated op that you need to test.
-  Status InitOpWithGraphVersion(int graph_def_version) {
-    OpKernel* kernel = nullptr;
-    Status status = CreateOpKernel(device_type_, device_.get(), allocator(),
-                                   flr_, node_def_, graph_def_version, &kernel);
-    kernel_.reset(kernel);
+  inline Status InitOpWithGraphVersion(int graph_def_version) {
+    Status status;
+    kernel_ = CreateOpKernel(device_type_, device_.get(), allocator(),
+                             node_def_, graph_def_version, &status);
     if (kernel_ != nullptr) input_types_ = kernel_->input_types();
     return status;
   }
 
-  Status InitThreadPool(int thread_num = 1) {
-    CHECK_GE(thread_num, 1);
-    thread_pool_ = new thread::ThreadPool(Env::Default(), ThreadOptions(),
-                                          "inter_op", thread_num);
+  Status InitThreadPool(int thread_num) {
+    if (thread_num < 1) {
+      return errors::InvalidArgument(
+          "The `thread_num` argument should be but got: ", thread_num);
+    }
+    thread_pool_ = MakeUnique<thread::ThreadPool>(
+        Env::Default(), ThreadOptions(), "inter_op", thread_num);
     return Status::OK();
   }
 
   Status InitFunctionLibraryRuntime(const std::vector<FunctionDef>& flib,
-                                    thread::ThreadPool* thread_pool = nullptr,
-                                    int cpu_num = 2) {
+                                    int cpu_num) {
+    if (cpu_num < 1) {
+      return errors::InvalidArgument(
+          "The `cpu_num` argument should be positive but got: ", cpu_num);
+    }
     SessionOptions options;
     auto* device_count = options.config.mutable_device_count();
     device_count->insert({"CPU", cpu_num});
     std::vector<std::unique_ptr<Device>> devices;
-    TF_CHECK_OK(DeviceFactory::AddDevices(
+    TF_RETURN_IF_ERROR(DeviceFactory::AddDevices(
         options, "/job:localhost/replica:0/task:0", &devices));
-    device_mgr_ = absl::make_unique<DeviceMgr>(std::move(devices));
+    device_mgr_ = MakeUnique<DeviceMgr>(std::move(devices));
 
     FunctionDefLibrary proto;
     for (const auto& fdef : flib) *(proto.add_function()) = fdef;
-    lib_def_.reset(new FunctionLibraryDefinition(OpRegistry::Global(), proto));
-    fdef_lib_ = lib_def_->ToProto();
+    lib_def_ =
+        MakeUnique<FunctionLibraryDefinition>(OpRegistry::Global(), proto);
 
     OptimizerOptions opts;
-    pflr_.reset(new ProcessFunctionLibraryRuntime(
+    pflr_ = MakeUnique<ProcessFunctionLibraryRuntime>(
         device_mgr_.get(), Env::Default(), TF_GRAPH_DEF_VERSION, lib_def_.get(),
-        opts, thread_pool, nullptr /* cluster_flr */));
+        opts, thread_pool_.get(), nullptr /* cluster_flr */);
 
     flr_ = pflr_->GetFLR("/job:localhost/replica:0/task:0/cpu:0");
 
-    if (thread_pool == nullptr) {
+    if (thread_pool_ == nullptr) {
       runner_ = [](std::function<void()> fn) { fn(); };
     } else {
-      runner_ = [thread_pool](std::function<void()> fn) {
-        thread_pool->Schedule(std::move(fn));
+      runner_ = [this](std::function<void()> fn) {
+        thread_pool_->Schedule(std::move(fn));
       };
     }
 
     return Status::OK();
   }
 
-  Status GetDatasetOutputFromContext(int output_index) {
+  Status InitDatasetFromContext(int output_index) {
     auto* tensor = GetOutput(output_index);
-    TF_CHECK_OK(GetDatasetFromVariantTensor(*tensor, &dataset_));
+    TF_RETURN_IF_ERROR(GetDatasetFromVariantTensor(*tensor, &dataset_));
+    dataset_->Ref();
     return Status::OK();
   }
 
   Status RunOpKernel() {
     // Make sure the old OpKernelContext is deleted before the Params it was
     // using.
-    context_.reset(nullptr);
-    params_.reset(new OpKernelContext::Params);
-    params_.get()->device = device_.get();
-    params_.get()->frame_iter = FrameAndIter(0, 0);
-    params_.get()->inputs = &inputs_;
-    params_.get()->op_kernel = kernel_.get();
-    params_.get()->function_library = flr_;
-    params_.get()->runner = &runner_;
-
-    step_container_.reset(new ScopedStepContainer(0, [](const string&) {}));
+    context_.reset();
+    params_ = MakeUnique<OpKernelContext::Params>();
+    params_->device = device_.get();
+    params_->frame_iter = FrameAndIter(0, 0);
+    params_->inputs = &inputs_;
+    params_->op_kernel = kernel_.get();
+    params_->function_library = flr_;
+    params_->runner = &runner_;
+    step_container_ = MakeUnique<ScopedStepContainer>(0, [](const string&) {});
     params_->step_container = step_container_.get();
+    checkpoint::TensorSliceReaderCacheWrapper slice_reader_cache_wrapper;
+    params_->slice_reader_cache = &slice_reader_cache_wrapper;
+    params_->resource_manager = device_.get()->resource_manager();
     std::vector<AllocatorAttributes> attrs;
     test::SetOutputAttrs(params_.get(), &attrs);
-    checkpoint::TensorSliceReaderCacheWrapper slice_reader_cache_wrapper;
-    params_.get()->slice_reader_cache = &slice_reader_cache_wrapper;
-    params_.get()->resource_manager = device_.get()->resource_manager();
 
-    context_.reset(new OpKernelContext(params_.get()));
+    context_ = MakeUnique<OpKernelContext>(params_.get());
     device_->Compute(kernel_.get(), context_.get());
     return context_->status();
   }
 
  protected:
   template <typename T>
-  void MakeOpDef() {
+  Status MakeOpDef() {
     DataType value_type = tensorflow::DataTypeToEnum<T>::value;
-    std::vector<PartialTensorShape>* shapes =
-        new std::vector<PartialTensorShape>({{}});
-    DataTypeVector* dtypes = new DataTypeVector({value_type});
+    std::vector<PartialTensorShape> shapes({{}});
+    DataTypeVector dtypes({value_type});
 
-    TF_CHECK_OK(NodeDefBuilder("rangedataset", "RangeDataset")
-                    .Input(FakeInput(DT_INT64))
-                    .Input(FakeInput(DT_INT64))
-                    .Input(FakeInput(DT_INT64))
-                    .Attr("output_types", *dtypes)
-                    .Attr("output_shapes", *shapes)
-                    .Finalize(node_def()));
-    TF_ASSERT_OK(InitOp());
+    TF_RETURN_IF_ERROR(NodeDefBuilder("range_dataset", "RangeDataset")
+                           .Input(FakeInput(DT_INT64))
+                           .Input(FakeInput(DT_INT64))
+                           .Input(FakeInput(DT_INT64))
+                           .Attr("output_types", dtypes)
+                           .Attr("output_shapes", shapes)
+                           .Finalize(node_def()));
+    TF_RETURN_IF_ERROR(InitOp());
+    return Status::OK();
   }
 
-  Status MakeDataset(int64 start, int64 end, int64 step, int output_index = 0,
-                     int thread_num = 2) {
+  Status MakeDataset(int64 start, int64 end, int64 step, int output_index,
+                     int thread_num, int cpu_num) {
     AddInputFromArray<int64>(TensorShape({}), {start});
     AddInputFromArray<int64>(TensorShape({}), {end});
     AddInputFromArray<int64>(TensorShape({}), {step});
 
-    TF_CHECK_OK(InitThreadPool(thread_num));
-    TF_CHECK_OK(InitFunctionLibraryRuntime({}, thread_pool_));
-    TF_CHECK_OK(RunOpKernel());
-
-    TF_CHECK_OK(GetDatasetOutputFromContext(output_index));
-    return Status::OK();
-  }
-
-  Status MakeIteratorContext() {
-    iteratorContext_ = new IteratorContext(context_.get());
+    TF_RETURN_IF_ERROR(InitThreadPool(thread_num));
+    TF_RETURN_IF_ERROR(InitFunctionLibraryRuntime({}, cpu_num));
+    TF_RETURN_IF_ERROR(RunOpKernel());
+    TF_RETURN_IF_ERROR(InitDatasetFromContext(output_index));
     return Status::OK();
   }
 
   Status MakeIterator() {
-    iterator_.reset(nullptr);
-    TF_CHECK_OK(
-        dataset_->MakeIterator(iteratorContext_, "Iterator", &iterator_));
-    return Status::OK();
+    iterator_context_.reset();
+    iterator_context_ = MakeUnique<IteratorContext>(context_.get());
+    iterator_.reset();
+    return dataset_->MakeIterator(iterator_context_.get(), "Iterator",
+                                  &iterator_);
   }
 
   Status GetNext(std::vector<Tensor>* out_tensors, bool* end_of_sequence) {
-    TF_CHECK_OK(
-        iterator_->GetNext(iteratorContext_, out_tensors, end_of_sequence));
-    return Status::OK();
+    return iterator_->GetNext(iterator_context_.get(), out_tensors,
+                              end_of_sequence);
   }
 
  protected:
-  std::unique_ptr<DeviceMgr> device_mgr_;
+  DatasetBase* dataset_;
+  // not owned
   FunctionLibraryRuntime* flr_;
+  std::function<void(std::function<void()>)> runner_;
+  std::unique_ptr<DeviceMgr> device_mgr_;
   std::unique_ptr<FunctionLibraryDefinition> lib_def_;
   std::unique_ptr<ProcessFunctionLibraryRuntime> pflr_;
-  FunctionDefLibrary fdef_lib_;
-  thread::ThreadPool* thread_pool_;
-  std::function<void(std::function<void()>)> runner_;
-  DatasetBase* dataset_;
-  IteratorContext* iteratorContext_;
+  std::unique_ptr<thread::ThreadPool> thread_pool_;
+  std::unique_ptr<IteratorContext> iterator_context_;
   std::unique_ptr<IteratorBase> iterator_;
 };
 
 TEST_F(RangeDatasetOpTest, GetNext) {
-  MakeOpDef<int64>();
+  TF_ASSERT_OK(MakeOpDef<int64>());
   int start = 0, end = 10, step = 1;
-  TF_CHECK_OK(MakeDataset(start, end, step));
-  TF_CHECK_OK(MakeIteratorContext());
-  TF_CHECK_OK(MakeIterator());
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  TF_ASSERT_OK(MakeIterator());
   bool end_of_sequence = false;
-  std::vector<Tensor>* out_tensors = new std::vector<Tensor>();
+  std::vector<Tensor> out_tensors;
 
   while (!end_of_sequence) {
-    TF_CHECK_OK(GetNext(out_tensors, &end_of_sequence));
+    TF_EXPECT_OK(GetNext(&out_tensors, &end_of_sequence));
   }
 
   std::vector<int64> expected_values;
   for (int i = start; i < end; i = i + step) {
+    expected_values.reserve(1);
     expected_values.emplace_back(i);
   }
 
-  EXPECT_EQ(out_tensors->size(), expected_values.size());
+  EXPECT_EQ(out_tensors.size(), expected_values.size());
 
-  for (size_t i = 0; i < out_tensors->size(); ++i) {
-    int64 actual_value = out_tensors->at(i).flat<int64>()(0);
+  for (size_t i = 0; i < out_tensors.size(); ++i) {
+    int64 actual_value = out_tensors[i].flat<int64>()(0);
     int64 expect_value = expected_values[i];
     EXPECT_EQ(actual_value, expect_value);
   }

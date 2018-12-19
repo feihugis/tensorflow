@@ -349,8 +349,11 @@ tf_cc_test(
     size = "small",
     srcs = ["range_dataset_op_test.cc"],
     deps = [
+        ":range_dataset_op",
         ":iterator_ops",
         "//tensorflow/core:testlib",
+        "//tensorflow/core:test_main",
+
     ],
 )
 
