@@ -28,6 +28,22 @@ namespace {
 
 class RangeDatasetOpTest : public OpsTestBase {
  public:
+  ~RangeDatasetOpTest() override {
+    gtl::STLDeleteElements(&tensors_);
+    gtl::STLDeleteElements(&managed_outputs_);
+    context_.reset(nullptr);
+    params_.reset(nullptr);
+    device_mgr_.reset(nullptr);
+    delete flr_;
+    lib_def_.reset(nullptr);
+    pflr_.reset(nullptr);
+    delete &fdef_lib_;
+    delete thread_pool_;
+    delete &runner_;
+    delete dataset_;
+    delete iteratorContext_;
+    iterator_.reset(nullptr);
+  }
   Status InitOp() { return InitOpWithGraphVersion(TF_GRAPH_DEF_VERSION); }
 
   // Only use this directly if you have a deprecated op that you need to test.
