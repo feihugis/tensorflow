@@ -35,13 +35,11 @@ class RangeDatasetOpTest : public OpsTestBase {
     dataset_->Unref();
   }
 
-  Status InitOp() { return InitOpWithGraphVersion(TF_GRAPH_DEF_VERSION); }
-
-  // Only use this directly if you have a deprecated op that you need to test.
-  inline Status InitOpWithGraphVersion(int graph_def_version) {
+  Status InitOp() {
     Status status;
     kernel_ = CreateOpKernel(device_type_, device_.get(), allocator(),
-                             node_def_, graph_def_version, &status);
+                             node_def_, TF_GRAPH_DEF_VERSION, &status);
+    TF_RETURN_IF_ERROR(status);
     if (kernel_ != nullptr) input_types_ = kernel_->input_types();
     return status;
   }
@@ -170,8 +168,7 @@ class RangeDatasetOpTest : public OpsTestBase {
 
  protected:
   DatasetBase* dataset_;
-  // not owned
-  FunctionLibraryRuntime* flr_;
+  FunctionLibraryRuntime* flr_; // not owned
   std::function<void(std::function<void()>)> runner_;
   std::unique_ptr<DeviceMgr> device_mgr_;
   std::unique_ptr<FunctionLibraryDefinition> lib_def_;
