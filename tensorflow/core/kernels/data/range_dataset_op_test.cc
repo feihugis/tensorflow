@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ limitations under the License.
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/partial_tensor_shape.h"
 #include "tensorflow/core/framework/variant.h"
+#include "tensorflow/core/framework/variant_tensor_data.h"
+#include "tensorflow/core/kernels/data/dataset_utils.h"
 #include "tensorflow/core/kernels/data/iterator_ops.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
 #include "tensorflow/core/platform/test.h"
@@ -98,6 +100,13 @@ class RangeDatasetOpTest : public OpsTestBase {
     return Status::OK();
   }
 
+  Status InitSerializationContext() {
+    SerializationContext::Params params;
+    params.flib_def = lib_def_.get();
+    serialization_context_ = MakeUnique<SerializationContext>(params);
+    return Status::OK();
+  }
+
   Status RunOpKernel() {
     // Make sure the old OpKernelContext is deleted before the Params it was
     // using.
@@ -129,7 +138,7 @@ class RangeDatasetOpTest : public OpsTestBase {
     std::vector<PartialTensorShape> shapes({{}});
     DataTypeVector dtypes({value_type});
 
-    TF_RETURN_IF_ERROR(NodeDefBuilder("range_dataset", "RangeDataset")
+    TF_RETURN_IF_ERROR(NodeDefBuilder(node_name_, op_name_)
                            .Input(FakeInput(DT_INT64))
                            .Input(FakeInput(DT_INT64))
                            .Input(FakeInput(DT_INT64))
@@ -142,6 +151,8 @@ class RangeDatasetOpTest : public OpsTestBase {
 
   Status MakeDataset(int64 start, int64 end, int64 step, int output_index,
                      int thread_num, int cpu_num) {
+    // Clear inputs_ to enable the repeated update of dataset inputs.
+    inputs_.clear();
     AddInputFromArray<int64>(TensorShape({}), {start});
     AddInputFromArray<int64>(TensorShape({}), {end});
     AddInputFromArray<int64>(TensorShape({}), {step});
@@ -166,9 +177,11 @@ class RangeDatasetOpTest : public OpsTestBase {
                               end_of_sequence);
   }
 
+  const string& name() const { return dataset_->name(); }
+
  protected:
   DatasetBase* dataset_;
-  FunctionLibraryRuntime* flr_; // not owned
+  FunctionLibraryRuntime* flr_;  // not owned
   std::function<void(std::function<void()>)> runner_;
   std::unique_ptr<DeviceMgr> device_mgr_;
   std::unique_ptr<FunctionLibraryDefinition> lib_def_;
@@ -176,36 +189,177 @@ class RangeDatasetOpTest : public OpsTestBase {
   std::unique_ptr<thread::ThreadPool> thread_pool_;
   std::unique_ptr<IteratorContext> iterator_context_;
   std::unique_ptr<IteratorBase> iterator_;
+  std::unique_ptr<SerializationContext> serialization_context_;
+  const string node_name_ = "range_dataset";
+  const string op_name_ = "RangeDataset";
 };
 
-TEST_F(RangeDatasetOpTest, GetNext) {
+#define RUN_TEST_GETNEXT(SUBTESTNAME, START, END, STEP)                    \
+  TEST_F(RangeDatasetOpTest, GetNext_##SUBTESTNAME) {                      \
+    TF_ASSERT_OK(MakeOpDef<int64>());                                      \
+    int output_index = 0, thread_num = 2, cpu_num = 4;                     \
+    TF_ASSERT_OK(                                                          \
+        MakeDataset(START, END, STEP, output_index, thread_num, cpu_num)); \
+    TF_ASSERT_OK(MakeIterator());                                          \
+    bool end_of_sequence = false;                                          \
+    std::vector<Tensor> out_tensors;                                       \
+    while (!end_of_sequence) {                                             \
+      TF_EXPECT_OK(GetNext(&out_tensors, &end_of_sequence));               \
+    }                                                                      \
+    std::vector<int64> expected_values;                                    \
+    for (int i = START; (END - i) * STEP > 0; i = i + STEP) {              \
+      expected_values.reserve(1);                                          \
+      expected_values.emplace_back(i);                                     \
+    }                                                                      \
+    EXPECT_EQ(out_tensors.size(), expected_values.size());                 \
+    for (size_t i = 0; i < out_tensors.size(); ++i) {                      \
+      int64 actual_value = out_tensors[i].flat<int64>()(0);                \
+      int64 expect_value = expected_values[i];                             \
+      EXPECT_EQ(actual_value, expect_value);                               \
+    }                                                                      \
+  }
+
+RUN_TEST_GETNEXT(Increase, 0, 10, 1);
+RUN_TEST_GETNEXT(Decrease, 10, 0, -1);
+#undef RUN_TEST_GETNEXT
+
+TEST_F(RangeDatasetOpTest, Dataset_Name) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int start = 0, end = 10, step = 1;
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  EXPECT_EQ(dataset_->name(), op_name_);
+}
+
+TEST_F(RangeDatasetOpTest, Dataset_Output_Dtypes) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int start = 0, end = 10, step = 1;
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  DataTypeVector expected_dtypes({DT_INT64});
+  EXPECT_EQ(dataset_->output_dtypes(), expected_dtypes);
+}
+
+TEST_F(RangeDatasetOpTest, Dataset_Output_Shapes) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int start = 0, end = 10, step = 1;
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  std::vector<PartialTensorShape> expected_shapes({{}});
+  EXPECT_EQ(dataset_->output_shapes().size(), expected_shapes.size());
+  for (int i = 0; i < dataset_->output_shapes().size(); ++i) {
+    dataset_->output_shapes()[i].IsIdenticalTo(expected_shapes[i]);
+  }
+}
+
+TEST_F(RangeDatasetOpTest, Dataset_Cardinality) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  int start = 0, end = 10, step = 1;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  EXPECT_EQ(dataset_->Cardinality(), 10);
+
+  step = 3;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  EXPECT_EQ(dataset_->Cardinality(), 4);
+
+  start = 10;
+  end = 0;
+  step = -4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  EXPECT_EQ(dataset_->Cardinality(), 3);
+}
+
+TEST_F(RangeDatasetOpTest, Dataset_Save) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  int start = 0, end = 10, step = 1;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  TF_ASSERT_OK(InitSerializationContext());
+  VariantTensorData data;
+  VariantTensorDataWriter writer(&data);
+  TF_ASSERT_OK(dataset_->Save(serialization_context_.get(), &writer));
+  TF_ASSERT_OK(writer.Flush());
+}
+
+TEST_F(RangeDatasetOpTest, Iterator_Output_Dtypes) {
   TF_ASSERT_OK(MakeOpDef<int64>());
   int start = 0, end = 10, step = 1;
   int output_index = 0, thread_num = 2, cpu_num = 4;
   TF_ASSERT_OK(
       MakeDataset(start, end, step, output_index, thread_num, cpu_num));
   TF_ASSERT_OK(MakeIterator());
-  bool end_of_sequence = false;
-  std::vector<Tensor> out_tensors;
+  DataTypeVector expected_dtypes({DT_INT64});
+  EXPECT_EQ(iterator_->output_dtypes(), expected_dtypes);
+}
 
-  while (!end_of_sequence) {
-    TF_EXPECT_OK(GetNext(&out_tensors, &end_of_sequence));
-  }
-
-  std::vector<int64> expected_values;
-  for (int i = start; i < end; i = i + step) {
-    expected_values.reserve(1);
-    expected_values.emplace_back(i);
-  }
-
-  EXPECT_EQ(out_tensors.size(), expected_values.size());
-
-  for (size_t i = 0; i < out_tensors.size(); ++i) {
-    int64 actual_value = out_tensors[i].flat<int64>()(0);
-    int64 expect_value = expected_values[i];
-    EXPECT_EQ(actual_value, expect_value);
+TEST_F(RangeDatasetOpTest, Iterator_Output_Shapes) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int start = 0, end = 10, step = 1;
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  TF_ASSERT_OK(MakeIterator());
+  std::vector<PartialTensorShape> expected_shapes({{}});
+  EXPECT_EQ(iterator_->output_shapes().size(), expected_shapes.size());
+  for (int i = 0; i < dataset_->output_shapes().size(); ++i) {
+    iterator_->output_shapes()[i].IsIdenticalTo(expected_shapes[i]);
   }
 }
+
+TEST_F(RangeDatasetOpTest, Iterator_Output_Prefix) {
+  TF_ASSERT_OK(MakeOpDef<int64>());
+  int start = 0, end = 10, step = 1;
+  int output_index = 0, thread_num = 2, cpu_num = 4;
+  TF_ASSERT_OK(
+      MakeDataset(start, end, step, output_index, thread_num, cpu_num));
+  TF_ASSERT_OK(MakeIterator());
+  EXPECT_EQ(iterator_->prefix(), "Iterator::Range");
+}
+
+#define RUN_TEST_IteratorRoundtrip(SUBTESTNAME, START, END, STEP, BREAKPOINT) \
+  TEST_F(RangeDatasetOpTest, IteratorRoundtrip_##SUBTESTNAME) {               \
+    TF_ASSERT_OK(MakeOpDef<int64>());                                         \
+    int output_index = 0, thread_num = 2, cpu_num = 4;                        \
+    TF_ASSERT_OK(                                                             \
+        MakeDataset(START, END, STEP, output_index, thread_num, cpu_num));    \
+    TF_ASSERT_OK(MakeIterator());                                             \
+    std::vector<Tensor> out_tensors;                                          \
+    bool end_of_sequence = false;                                             \
+    int cur_val = START - STEP;                                               \
+    for (int i = 0; i < BREAKPOINT; i++) {                                    \
+      if (!end_of_sequence) {                                                 \
+        TF_EXPECT_OK(GetNext(&out_tensors, &end_of_sequence));                \
+        cur_val =                                                             \
+            ((END - cur_val - STEP) * STEP > 0) ? cur_val + STEP : cur_val;   \
+      }                                                                       \
+    }                                                                         \
+    TF_ASSERT_OK(InitSerializationContext());                                 \
+    VariantTensorData data;                                                   \
+    VariantTensorDataWriter writer(&data);                                    \
+    TF_ASSERT_OK(iterator_->Save(serialization_context_.get(), &writer));     \
+    TF_ASSERT_OK(writer.Flush());                                             \
+    VariantTensorDataReader reader(&data);                                    \
+    TF_ASSERT_OK(iterator_->Restore(iterator_context_.get(), &reader));       \
+    TF_EXPECT_OK(GetNext(&out_tensors, &end_of_sequence));                    \
+    VLOG(0) << cur_val << " + " << STEP << " < " << END;                      \
+    int expect_next =                                                         \
+        ((END - cur_val - STEP) * STEP > 0) ? cur_val + STEP : cur_val;       \
+    EXPECT_EQ(out_tensors.back().flat<int64>()(0), expect_next);              \
+  }
+
+RUN_TEST_IteratorRoundtrip(UnusedIterator, 0, 10, 2, 0);
+RUN_TEST_IteratorRoundtrip(FullyUsedIterator_Increase, 0, 10, 2, 4);
+RUN_TEST_IteratorRoundtrip(FullyUsedIterator_Decrease, 10, 0, -2, 4);
+RUN_TEST_IteratorRoundtrip(ExhaustedIterator, 0, 10, 2, 6);
+#undef RUN_TEST_IteratorRoundtrip
 
 }  // namespace
 }  // namespace data
