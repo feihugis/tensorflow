@@ -32,6 +32,9 @@ namespace {
 
 class RangeDatasetOpTest : public OpsTestBase {
  public:
+  static const char* kNodeName;
+  static const char* kOpName;
+
   ~RangeDatasetOpTest() override {
     gtl::STLDeleteElements(&tensors_);
     gtl::STLDeleteElements(&managed_outputs_);
@@ -191,12 +194,10 @@ class RangeDatasetOpTest : public OpsTestBase {
   std::unique_ptr<IteratorContext> iterator_context_;
   std::unique_ptr<IteratorBase> iterator_;
   std::unique_ptr<SerializationContext> serialization_context_;
-  static const string kNodeName;
-  static const string kOpName;
 };
 
-const string RangeDatasetOpTest::kNodeName = "range_dataset";
-const string RangeDatasetOpTest::kOpName = "RangeDataset";
+const char* RangeDatasetOpTest::kNodeName = "range_dataset";
+const char* RangeDatasetOpTest::kOpName = "RangeDataset";
 
 struct DatasetGetNextTest
     : RangeDatasetOpTest,
