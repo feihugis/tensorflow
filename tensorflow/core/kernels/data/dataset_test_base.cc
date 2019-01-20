@@ -13,15 +13,56 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifdef GOOGLE_CUDA
-#define EIGEN_USE_GPU
-#include "tensorflow/core/common_runtime/gpu/gpu_managed_allocator.h"
-#endif
-
-#include "dataset_test_base.h"
+#include "tensorflow/core/kernels/data/dataset_test_base.h"
 
 namespace tensorflow {
 namespace data {
+
+std::unique_ptr<OpKernel> DatasetOpsTestBase::CreateOpKernel(
+    const NodeDef& node_def) {
+  Status status;
+  std::unique_ptr<OpKernel> kernel =
+      tensorflow::CreateOpKernel(device_type_, device_.get(), allocator_,
+                                 node_def, TF_GRAPH_DEF_VERSION, &status);
+  TF_CHECK_OK(status) << status;
+  return kernel;
+}
+
+DatasetBase* DatasetOpsTestBase::CreateDataset(OpKernel* kernel,
+                                               OpKernelContext* context) {
+  TF_CHECK_OK(RunOpKernel(kernel, context));
+  // Assume that DatasetOp has only one output.
+  return GetDatasetFromContext(context, 0);
+}
+
+std::unique_ptr<IteratorBase> DatasetOpsTestBase::CreateIterator(
+    OpKernelContext* context, DatasetBase* dataset,
+    std::unique_ptr<IteratorContext>* iterator_context) {
+  *iterator_context = MakeUnique<IteratorContext>(context);
+  IteratorContext::Params params(iterator_context->get());
+  params.function_handle_cache = new FunctionHandleCache(flr_);
+  iterator_context->reset(new IteratorContext(params));
+  std::unique_ptr<IteratorBase> iterator;
+  TF_CHECK_OK(
+      dataset->MakeIterator(iterator_context->get(), "Iterator", &iterator));
+  return iterator;
+}
+
+Status DatasetOpsTestBase::GetNext(IteratorBase* iterator,
+                                   IteratorContext* iterator_context,
+                                   std::vector<Tensor>* out_tensors,
+                                   bool* end_of_sequence) {
+  return iterator->GetNext(iterator_context, out_tensors, end_of_sequence);
+}
+
+DatasetBase* DatasetOpsTestBase::GetDatasetFromContext(OpKernelContext* context,
+                                                       int output_index) {
+  DatasetBase* dataset;
+  Tensor* output = context->mutable_output(output_index);
+  TF_CHECK_OK(GetDatasetFromVariantTensor(*output, &dataset));
+  dataset->Ref();
+  return dataset;
+}
 
 Status DatasetOpsTestBase::InitThreadPool(int thread_num) {
   if (thread_num < 1) {
@@ -66,47 +107,14 @@ Status DatasetOpsTestBase::InitFunctionLibraryRuntime(
   return Status::OK();
 }
 
-Status DatasetOpsTestBase::InitDatasetFromContext(OpKernelContext* context,
-                                                  int output_index,
-                                                  DatasetBase** dataset) {
-  Status status;
-  Tensor* output = GetOutput(context, output_index, &status);
-  TF_RETURN_IF_ERROR(GetDatasetFromVariantTensor(*output, dataset));
-  (*dataset)->Ref();
-  return status;
+Status DatasetOpsTestBase::RunOpKernel(OpKernel* op_kernel,
+                                       OpKernelContext* context) {
+  device_->Compute(op_kernel, context);
+  return context->status();
 }
 
-Tensor* DatasetOpsTestBase::GetOutput(OpKernelContext* context,
-                                      int output_index, Status* status) {
-  if (output_index >= context->num_outputs()) {
-    *status = errors::InvalidArgument(
-        "The 'output_index' should be less than the output number( ",
-        context->num_outputs(), ") but got: ", output_index);
-  }
-  Tensor* output = context->mutable_output(output_index);
-#ifdef GOOGLE_CUDA
-  if (device_type_ == DEVICE_GPU) {
-    managed_outputs_.resize(context_->num_outputs());
-    // Copy the output tensor to managed memory if we haven't done so.
-    if (!managed_outputs_[output_index]) {
-      Tensor* managed_output =
-          new Tensor(allocator(), output->dtype(), output->shape());
-      auto src = output->tensor_data();
-      auto dst = managed_output->tensor_data();
-      context_->eigen_gpu_device().memcpy(const_cast<char*>(dst.data()),
-                                          src.data(), src.size());
-      context_->eigen_gpu_device().synchronize();
-      managed_outputs_[output_index] = managed_output;
-    }
-    output = managed_outputs_[output_index];
-  }
-#endif
-  return output;
-}
-
-Status DatasetOpsTestBase::InitOpKernelContext(
-    OpKernel* kernel, gtl::InlinedVector<TensorValue, 4>* inputs,
-    std::unique_ptr<OpKernelContext>* context) {
+std::unique_ptr<OpKernelContext> DatasetOpsTestBase::CreateOpKernelContext(
+    OpKernel* kernel, gtl::InlinedVector<TensorValue, 4>* inputs) {
   params_ = MakeUnique<OpKernelContext::Params>();
   params_->device = device_.get();
   params_->resource_manager = device_->resource_manager();
@@ -120,39 +128,33 @@ Status DatasetOpsTestBase::InitOpKernelContext(
   checkpoint::TensorSliceReaderCacheWrapper slice_reader_cache_wrapper;
   params_->slice_reader_cache = &slice_reader_cache_wrapper;
   SetOutputAttrs();
-  *context = MakeUnique<OpKernelContext>(params_.get());
-  return Status::OK();
+  return MakeUnique<OpKernelContext>(params_.get());
 }
 
-Status DatasetOpsTestBase::RunOpKernel(OpKernel* op_kernel,
-                                       OpKernelContext* context) {
-  device_->Compute(op_kernel, context);
-  return context->status();
-}
-
-void DatasetOpsTestBase::InitSerializationContext(
-    std::unique_ptr<SerializationContext>& serialization_context_) {
+std::unique_ptr<SerializationContext>
+DatasetOpsTestBase::CreateSerializationContext() {
   SerializationContext::Params params;
   params.flib_def = lib_def_.get();
-  serialization_context_ = MakeUnique<SerializationContext>(params);
+  return MakeUnique<SerializationContext>(params);
 }
 
-Status DatasetOpsTestBase::MakeOpKernel(NodeDef node_def,
-                                        std::unique_ptr<OpKernel>& kernel) {
-  Status status;
-  kernel = CreateOpKernel(device_type_, device_.get(), allocator(), node_def,
-                          TF_GRAPH_DEF_VERSION, &status);
-  TF_RETURN_IF_ERROR(status);
-  return status;
+Status DatasetOpsTestBase::CheckOpKernelInput(
+    const OpKernel& kernel, const gtl::InlinedVector<TensorValue, 4>& inputs) {
+  if (kernel.input_types().size() != inputs.size()) {
+    return errors::Internal("The number of input elements should be ",
+                            kernel.input_types().size(),
+                            ", but got: ", inputs.size());
+  }
+  return Status::OK();
 }
 
 Tensor* DatasetOpsTestBase::AddDatasetInput(
     gtl::InlinedVector<TensorValue, 4>* inputs, DataTypeVector input_types,
     DataType dtype, const TensorShape& shape) {
   CHECK_GT(input_types.size(), inputs->size())
-      << "Adding more inputs than types; perhaps you need to call MakeOp";
+      << "Adding more inputs than types.";
   bool is_ref = IsRefType(input_types[inputs->size()]);
-  Tensor* input = new Tensor(allocator(), dtype, shape);
+  Tensor* input = new Tensor(allocator_, dtype, shape);
   tensors_.push_back(input);
   if (is_ref) {
     CHECK_EQ(RemoveRefType(input_types[inputs->size()]), dtype);
@@ -164,32 +166,6 @@ Tensor* DatasetOpsTestBase::AddDatasetInput(
   return input;
 }
 
-Status DatasetOpsTestBase::MakeDataset(OpKernel* kernel,
-                                       OpKernelContext* context) {
-  device_->Compute(kernel, context);
-  return context->status();
-}
-
-Status DatasetOpsTestBase::MakeIterator(
-    OpKernelContext* context, DatasetBase* dataset,
-    std::unique_ptr<IteratorContext>* iterator_context,
-    std::unique_ptr<IteratorBase>* iterator) {
-  *iterator_context = MakeUnique<IteratorContext>(context);
-  IteratorContext::Params params(iterator_context->get());
-  params.function_handle_cache = new FunctionHandleCache(flr_);
-  iterator_context->reset(new IteratorContext(params));
-  return dataset->MakeIterator(iterator_context->get(), "Iterator", iterator);
-}
-
-Status DatasetOpsTestBase::GetNext(IteratorBase* iterator,
-                                   IteratorContext* iterator_context,
-                                   std::vector<Tensor>* out_tensors,
-                                   bool* end_of_sequence) {
-  return iterator->GetNext(iterator_context, out_tensors, end_of_sequence);
-}
-
-Allocator* DatasetOpsTestBase::allocator() { return allocator_; }
-
 void DatasetOpsTestBase::SetOutputAttrs() {
   allocator_attrs_.clear();
   for (int index = 0; index < params_->op_kernel->num_outputs(); index++) {
@@ -200,16 +176,6 @@ void DatasetOpsTestBase::SetOutputAttrs() {
     allocator_attrs_.emplace_back(attr);
   }
   params_->output_attr_array = gtl::vector_as_array(&allocator_attrs_);
-}
-
-Status DatasetOpsTestBase::CheckOpKernelInput(
-    const OpKernel& kernel, const gtl::InlinedVector<TensorValue, 4>& inputs) {
-  if (kernel.input_types().size() != inputs.size()) {
-    return errors::Internal("The number of input elements should be ",
-                            kernel.input_types().size(),
-                            ", but got: ", inputs.size());
-  }
-  return Status::OK();
 }
 
 }  // namespace data
