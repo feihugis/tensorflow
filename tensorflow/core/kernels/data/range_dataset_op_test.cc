@@ -44,21 +44,23 @@ class RangeDatasetOpTest : public DatasetOpsTestBase {
 
  protected:
   // Creates a new RangeDataset, meanwhile initializing the operation kernel and
-  // context internally.
+  // context internally. `T` specifies the ouput dtype of RangDataset op kernel.
   template <typename T>
   DatasetBase* CreateRangeDataset(int64 start, int64 end, int64 step) {
-    kernel_ = CreateRangeDatasetOpKernel<T>("range");
-    CHECK_EQ(inputs_.size(), 0);
-    AddDatasetInputFromArray<int64>(&inputs_, kernel_->input_types(),
-                                    TensorShape({}), {start});
-    AddDatasetInputFromArray<int64>(&inputs_, kernel_->input_types(),
-                                    TensorShape({}), {end});
-    AddDatasetInputFromArray<int64>(&inputs_, kernel_->input_types(),
-                                    TensorShape({}), {step});
+    inputs_.clear();
+    TF_CHECK_OK(CreateRangeDatasetOpKernel<T>("range", &kernel_));
+    TF_CHECK_OK(AddDatasetInputFromArray<int64>(
+        &inputs_, kernel_->input_types(), TensorShape({}), {start}));
+    TF_CHECK_OK(AddDatasetInputFromArray<int64>(
+        &inputs_, kernel_->input_types(), TensorShape({}), {end}));
+    TF_CHECK_OK(AddDatasetInputFromArray<int64>(
+        &inputs_, kernel_->input_types(), TensorShape({}), {step}));
 
-    context_ = CreateOpKernelContext(kernel_.get(), &inputs_);
+    TF_CHECK_OK(CreateOpKernelContext(kernel_.get(), &inputs_, &context_));
     TF_CHECK_OK(CheckOpKernelInput(*kernel_, inputs_));
-    return CreateDataset(kernel_.get(), context_.get());
+    DatasetBase* dataset;
+    TF_CHECK_OK(CreateDataset(kernel_.get(), context_.get(), &dataset));
+    return dataset;
   }
 
  protected:
@@ -89,7 +91,8 @@ TEST_P(DatasetGetNextTest, GetNext) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
   dataset_ = CreateRangeDataset<int>(start, end, step);
-  iterator_ = CreateIterator(context_.get(), dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(context_.get(), &iterator_context_));
+  TF_ASSERT_OK(CreateIterator(iterator_context_.get(), dataset_, &iterator_));
 
   bool end_of_sequence = false;
   std::vector<Tensor> out_tensors;
@@ -122,7 +125,7 @@ TEST_F(RangeDatasetOpTest, DatasetName) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
-  dataset_ = CreateRangeDataset<int>(start, end, step);
+  dataset_ = CreateRangeDataset<int64>(start, end, step);
 
   EXPECT_EQ(dataset_->name(), kOpName);
 }
@@ -184,7 +187,7 @@ TEST_F(RangeDatasetOpTest, DatasetSave) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
   dataset_ = CreateRangeDataset<int64>(start, end, step);
-  serialization_context_ = CreateSerializationContext();
+  TF_ASSERT_OK(CreateSerializationContext(&serialization_context_));
 
   VariantTensorData data;
   VariantTensorDataWriter writer(&data);
@@ -199,7 +202,8 @@ TEST_F(RangeDatasetOpTest, IteratorOutputDtypes) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
   dataset_ = CreateRangeDataset<int64>(start, end, step);
-  iterator_ = CreateIterator(context_.get(), dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(context_.get(), &iterator_context_));
+  TF_ASSERT_OK(CreateIterator(iterator_context_.get(), dataset_, &iterator_));
 
   DataTypeVector expected_dtypes({DT_INT64});
   EXPECT_EQ(iterator_->output_dtypes(), expected_dtypes);
@@ -212,7 +216,8 @@ TEST_F(RangeDatasetOpTest, IteratorOutputShapes) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
   dataset_ = CreateRangeDataset<int64>(start, end, step);
-  iterator_ = CreateIterator(context_.get(), dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(context_.get(), &iterator_context_));
+  TF_ASSERT_OK(CreateIterator(iterator_context_.get(), dataset_, &iterator_));
 
   std::vector<PartialTensorShape> expected_shapes({{}});
   EXPECT_EQ(iterator_->output_shapes().size(), expected_shapes.size());
@@ -228,7 +233,8 @@ TEST_F(RangeDatasetOpTest, IteratorOutputPrefix) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
   dataset_ = CreateRangeDataset<int64>(start, end, step);
-  iterator_ = CreateIterator(context_.get(), dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(context_.get(), &iterator_context_));
+  TF_ASSERT_OK(CreateIterator(iterator_context_.get(), dataset_, &iterator_));
 
   EXPECT_EQ(iterator_->prefix(), "Iterator::Range");
 }
@@ -247,7 +253,8 @@ TEST_P(IteratorRoundtripTest, Roundtrip) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({}, cpu_num));
   dataset_ = CreateRangeDataset<int64>(start, end, step);
-  iterator_ = CreateIterator(context_.get(), dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(context_.get(), &iterator_context_));
+  TF_ASSERT_OK(CreateIterator(iterator_context_.get(), dataset_, &iterator_));
 
   std::vector<Tensor> out_tensors;
   bool end_of_sequence = false;
@@ -259,7 +266,7 @@ TEST_P(IteratorRoundtripTest, Roundtrip) {
       cur_val = ((end - cur_val - step) * step > 0) ? cur_val + step : cur_val;
     }
   }
-  serialization_context_ = CreateSerializationContext();
+  TF_CHECK_OK(CreateSerializationContext(&serialization_context_));
   VariantTensorData data;
   VariantTensorDataWriter writer(&data);
   TF_ASSERT_OK(iterator_->Save(serialization_context_.get(), &writer));

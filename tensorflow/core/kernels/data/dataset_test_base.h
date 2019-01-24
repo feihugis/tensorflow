@@ -38,36 +38,36 @@ limitations under the License.
 namespace tensorflow {
 namespace data {
 
-// Helpful functions to test dataset kernels.
+// Helpful functions to test Dataset op kernels.
 class DatasetOpsTestBase : public ::testing::Test {
  public:
   DatasetOpsTestBase()
       : device_(DeviceFactory::NewDevice("CPU", {}, "/job:a/replica:0/task:0")),
         device_type_(DEVICE_CPU) {
-    CHECK(device_.get()) << "Could not create CPU device";
     allocator_ = device_->GetAllocator(AllocatorAttributes());
   }
 
   ~DatasetOpsTestBase() {
     gtl::STLDeleteElements(&tensors_);
-    gtl::STLDeleteElements(&managed_outputs_);
+    function_handle_cache_.reset();
   }
 
-  // Creates a new operation based on the node definition.
-  std::unique_ptr<OpKernel> CreateOpKernel(const NodeDef& node_def);
+  // Creates a new op kernel based on the node definition.
+  Status CreateOpKernel(const NodeDef& node_def,
+                        std::unique_ptr<OpKernel>* op_kernel);
 
   // Creates a new dataset. Here we assume that the dataset operation has only
   // one output stored in the OpKernelContext.
-  DatasetBase* CreateDataset(OpKernel* kernel, OpKernelContext* context);
+  Status CreateDataset(OpKernel* kernel, OpKernelContext* context,
+                       DatasetBase** const dataset);
 
   // Creates a new iterator for iterating over the range of elements in this
-  // dataset. Meanwhile, `iterator_context` will be initialized internally.
+  // dataset.
   //
   // This method may be called multiple times on the same dataset, and the
   // resulting iterators will have distinct state.
-  std::unique_ptr<IteratorBase> CreateIterator(
-      OpKernelContext* context, DatasetBase* dataset,
-      std::unique_ptr<IteratorContext>* iterator_context);
+  Status CreateIterator(IteratorContext* context, const DatasetBase* dataset,
+                        std::unique_ptr<IteratorBase>* iterator);
 
   // Gets the next output from the range that this iterator is traversing.
   //
@@ -76,45 +76,54 @@ class DatasetOpsTestBase : public ::testing::Test {
   // stored in `*end_of_sequence`.
   //
   // If no more outputs remain in this iterator's range, `true` will
-  // be stored in `*end_of_sequence`, and the content of
-  // `*out_tensors` will be undefined.
+  // be stored in `*end_of_sequence`, and the content of `*out_tensors` will be
+  // undefined.
   Status GetNext(IteratorBase* iterator, IteratorContext* iterator_context,
                  std::vector<Tensor>* out_tensors, bool* end_of_sequence);
 
-  // Creates a new range dataset operation.
+  // Creates a new RangeDataset op kernel. `T` specifies the output dtype of the
+  // op kernel.
   template <typename T>
-  std::unique_ptr<OpKernel> CreateRangeDatasetOpKernel(StringPiece node_name) {
+  Status CreateRangeDatasetOpKernel(
+      StringPiece node_name, std::unique_ptr<OpKernel>* range_op_kernel) {
     DataTypeVector dtypes({tensorflow::DataTypeToEnum<T>::value});
     std::vector<PartialTensorShape> shapes({{}});
     NodeDef node_def = test::function::NDef(
         node_name, "RangeDataset", {"start", "stop", "step"},
         {{"output_types", dtypes}, {"output_shapes", shapes}});
-    return CreateOpKernel(node_def);
+
+    TF_RETURN_IF_ERROR(CreateOpKernel(node_def, range_op_kernel));
+    return Status::OK();
   }
 
-  // Creates a new range dataset.
+  // Creates a new RangeDataset dataset. `U` specifies the output dtype of the
+  // RangeDataset op kernel.
   template <typename U>
-  DatasetBase* CreateRangeDataset(int64 start, int64 end, int64 step,
-                                  StringPiece node_name) {
-    std::unique_ptr<OpKernel> range_kernel =
-        CreateRangeDatasetOpKernel<U>(node_name);
-    std::unique_ptr<OpKernelContext> range_context;
+  Status CreateRangeDataset(int64 start, int64 end, int64 step,
+                            StringPiece node_name,
+                            DatasetBase** range_dataset) {
+    std::unique_ptr<OpKernel> range_kernel;
+    TF_RETURN_IF_ERROR(CreateRangeDatasetOpKernel<U>(node_name, &range_kernel));
     gtl::InlinedVector<TensorValue, 4> range_inputs;
-    AddDatasetInputFromArray<int64>(&range_inputs, range_kernel->input_types(),
-                                    TensorShape({}), {start});
-    AddDatasetInputFromArray<int64>(&range_inputs, range_kernel->input_types(),
-                                    TensorShape({}), {end});
-    AddDatasetInputFromArray<int64>(&range_inputs, range_kernel->input_types(),
-                                    TensorShape({}), {step});
-    range_context = CreateOpKernelContext(range_kernel.get(), &range_inputs);
-    TF_CHECK_OK(CheckOpKernelInput(*range_kernel, range_inputs));
-    TF_CHECK_OK(RunOpKernel(range_kernel.get(), range_context.get()));
-    return GetDatasetFromContext(range_context.get(), 0);
+    TF_RETURN_IF_ERROR(AddDatasetInputFromArray<int64>(
+        &range_inputs, range_kernel->input_types(), TensorShape({}), {start}));
+    TF_RETURN_IF_ERROR(AddDatasetInputFromArray<int64>(
+        &range_inputs, range_kernel->input_types(), TensorShape({}), {end}));
+    TF_RETURN_IF_ERROR(AddDatasetInputFromArray<int64>(
+        &range_inputs, range_kernel->input_types(), TensorShape({}), {step}));
+    std::unique_ptr<OpKernelContext> range_context;
+    TF_RETURN_IF_ERROR(CreateOpKernelContext(range_kernel.get(), &range_inputs,
+                                             &range_context));
+    TF_RETURN_IF_ERROR(CheckOpKernelInput(*range_kernel, range_inputs));
+    TF_RETURN_IF_ERROR(RunOpKernel(range_kernel.get(), range_context.get()));
+    TF_RETURN_IF_ERROR(
+        GetDatasetFromContext(range_context.get(), 0, range_dataset));
+    return Status::OK();
   }
 
   // Fetches the dataset from the operation context.
-  DatasetBase* GetDatasetFromContext(OpKernelContext* context,
-                                     int output_index);
+  Status GetDatasetFromContext(OpKernelContext* context, int output_index,
+                               DatasetBase** const dataset);
 
  protected:
   // Creates a thread pool for parallel tasks.
@@ -130,37 +139,46 @@ class DatasetOpsTestBase : public ::testing::Test {
   // (see `CreateOpKernelContext()` ) before running this method.
   Status RunOpKernel(OpKernel* op_kernel, OpKernelContext* context);
 
-  // Checks that the size of `inputs` matches the requirement of the operation.
+  // Checks that the size of `inputs` matches the requirement of the op kernel.
   Status CheckOpKernelInput(const OpKernel& kernel,
                             const gtl::InlinedVector<TensorValue, 4>& inputs);
 
   // Creates a new context for running the dataset operation.
-  std::unique_ptr<OpKernelContext> CreateOpKernelContext(
-      OpKernel* kernel, gtl::InlinedVector<TensorValue, 4>* inputs);
+  Status CreateOpKernelContext(OpKernel* kernel,
+                               gtl::InlinedVector<TensorValue, 4>* inputs,
+                               std::unique_ptr<OpKernelContext>* context);
 
-  // Returns a new serialization context for serializing the dataset and
+  // Creates a new iterator context for iterating the dataset.
+  Status CreateIteratorContext(
+      OpKernelContext* const op_context,
+      std::unique_ptr<IteratorContext>* iterator_context);
+
+  // Creates a new serialization context for serializing the dataset and
   // iterator.
-  std::unique_ptr<SerializationContext> CreateSerializationContext();
+  Status CreateSerializationContext(
+      std::unique_ptr<SerializationContext>* context);
 
   // Adds an arrayslice of data into the input vector. `input_types` describes
   // the required data type for each input tensor. `shape` and `data` describes
-  // the shape and values of the current input tensor.
+  // the shape and values of the current input tensor. `T` specifies the dtype
+  // of the input data.
   template <typename T>
-  void AddDatasetInputFromArray(gtl::InlinedVector<TensorValue, 4>* inputs,
-                                DataTypeVector input_types,
-                                const TensorShape& shape,
-                                const gtl::ArraySlice<T>& data) {
-    Tensor* input =
-        AddDatasetInput(inputs, input_types, DataTypeToEnum<T>::v(), shape);
-    test::FillValues<T>(input, data);
+  Status AddDatasetInputFromArray(gtl::InlinedVector<TensorValue, 4>* inputs,
+                                  DataTypeVector input_types,
+                                  const TensorShape& shape,
+                                  const gtl::ArraySlice<T>& data) {
+    TF_RETURN_IF_ERROR(
+        AddDatasetInput(inputs, input_types, DataTypeToEnum<T>::v(), shape));
+    test::FillValues<T>(inputs->back().tensor, data);
+    return Status::OK();
   }
 
  private:
-  // Adds an empty tensor to the input vector. The returned pointer can be used
-  // to fill in the value for the tensor.
-  Tensor* AddDatasetInput(gtl::InlinedVector<TensorValue, 4>* inputs,
-                          DataTypeVector input_types, DataType dtype,
-                          const TensorShape& shape);
+  // Adds an empty tensor with the specified dtype and shape to the input
+  // vector.
+  Status AddDatasetInput(gtl::InlinedVector<TensorValue, 4>* inputs,
+                         DataTypeVector input_types, DataType dtype,
+                         const TensorShape& shape);
 
   // Sets the allocator attributes for the operation outputs.
   void SetOutputAttrs();
@@ -168,21 +186,20 @@ class DatasetOpsTestBase : public ::testing::Test {
  protected:
   std::unique_ptr<Device> device_;
   DeviceType device_type_;
-  Allocator* allocator_;
+  Allocator* allocator_;  // Owned by `AllocatorFactoryRegistry`.
   std::vector<AllocatorAttributes> allocator_attrs_;
   std::unique_ptr<ScopedStepContainer> step_container_;
 
-  FunctionLibraryRuntime* flr_;  // not owned
+  std::unique_ptr<ProcessFunctionLibraryRuntime> pflr_;
+  FunctionLibraryRuntime* flr_;  // Owned by `pflr_`.
+  std::unique_ptr<FunctionHandleCache> function_handle_cache_;
   std::function<void(std::function<void()>)> runner_;
   std::unique_ptr<DeviceMgr> device_mgr_;
   std::unique_ptr<FunctionLibraryDefinition> lib_def_;
   std::unique_ptr<OpKernelContext::Params> params_;
-  std::unique_ptr<ProcessFunctionLibraryRuntime> pflr_;
   std::unique_ptr<thread::ThreadPool> thread_pool_;
-  std::vector<Tensor*> tensors_;  // owns Tensors.
-  // Copies of the outputs in unified memory (host and device accessible).
-  std::vector<Tensor*> managed_outputs_;
-  mutex lock_for_refs_;  // Used as the Mutex for inputs added as refs
+  std::vector<Tensor*> tensors_;  // Owns Tensors.
+  mutex lock_for_refs_;           // Used as the Mutex for inputs added as refs.
 };
 
 }  // namespace data

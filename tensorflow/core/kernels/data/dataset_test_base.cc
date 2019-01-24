@@ -18,34 +18,38 @@ limitations under the License.
 namespace tensorflow {
 namespace data {
 
-std::unique_ptr<OpKernel> DatasetOpsTestBase::CreateOpKernel(
-    const NodeDef& node_def) {
+Status DatasetOpsTestBase::CreateOpKernel(
+    const NodeDef& node_def, std::unique_ptr<OpKernel>* op_kernel) {
   Status status;
-  std::unique_ptr<OpKernel> kernel =
+  *op_kernel =
       tensorflow::CreateOpKernel(device_type_, device_.get(), allocator_,
                                  node_def, TF_GRAPH_DEF_VERSION, &status);
-  TF_CHECK_OK(status) << status;
-  return kernel;
+  return status;
 }
 
-DatasetBase* DatasetOpsTestBase::CreateDataset(OpKernel* kernel,
-                                               OpKernelContext* context) {
-  TF_CHECK_OK(RunOpKernel(kernel, context));
+Status DatasetOpsTestBase::CreateDataset(OpKernel* kernel,
+                                         OpKernelContext* context,
+                                         DatasetBase** const dataset) {
+  TF_RETURN_IF_ERROR(RunOpKernel(kernel, context));
   // Assume that DatasetOp has only one output.
-  return GetDatasetFromContext(context, 0);
+  TF_RETURN_IF_ERROR(GetDatasetFromContext(context, 0, dataset));
+  return Status::OK();
 }
 
-std::unique_ptr<IteratorBase> DatasetOpsTestBase::CreateIterator(
-    OpKernelContext* context, DatasetBase* dataset,
+Status DatasetOpsTestBase::CreateIteratorContext(
+    OpKernelContext* const op_context,
     std::unique_ptr<IteratorContext>* iterator_context) {
-  *iterator_context = MakeUnique<IteratorContext>(context);
-  IteratorContext::Params params(iterator_context->get());
-  params.function_handle_cache = new FunctionHandleCache(flr_);
-  iterator_context->reset(new IteratorContext(params));
-  std::unique_ptr<IteratorBase> iterator;
-  TF_CHECK_OK(
-      dataset->MakeIterator(iterator_context->get(), "Iterator", &iterator));
-  return iterator;
+  IteratorContext::Params params(op_context);
+  function_handle_cache_ = absl::make_unique<FunctionHandleCache>(flr_);
+  params.function_handle_cache = function_handle_cache_.get();
+  *iterator_context = absl::make_unique<IteratorContext>(params);
+  return Status::OK();
+}
+
+Status DatasetOpsTestBase::CreateIterator(
+    IteratorContext* context, const DatasetBase* dataset,
+    std::unique_ptr<IteratorBase>* iterator) {
+  return dataset->MakeIterator(context, "Iterator", iterator);
 }
 
 Status DatasetOpsTestBase::GetNext(IteratorBase* iterator,
@@ -55,22 +59,22 @@ Status DatasetOpsTestBase::GetNext(IteratorBase* iterator,
   return iterator->GetNext(iterator_context, out_tensors, end_of_sequence);
 }
 
-DatasetBase* DatasetOpsTestBase::GetDatasetFromContext(OpKernelContext* context,
-                                                       int output_index) {
-  DatasetBase* dataset;
+Status DatasetOpsTestBase::GetDatasetFromContext(OpKernelContext* context,
+                                                 int output_index,
+                                                 DatasetBase** const dataset) {
   Tensor* output = context->mutable_output(output_index);
-  TF_CHECK_OK(GetDatasetFromVariantTensor(*output, &dataset));
-  dataset->Ref();
-  return dataset;
+  Status status = GetDatasetFromVariantTensor(*output, dataset);
+  (*dataset)->Ref();
+  return status;
 }
 
 Status DatasetOpsTestBase::InitThreadPool(int thread_num) {
   if (thread_num < 1) {
     return errors::InvalidArgument(
-        "The `thread_num` argument should be but got: ", thread_num);
+        "The `thread_num` argument should be positive but got: ", thread_num);
   }
-  thread_pool_ = MakeUnique<thread::ThreadPool>(Env::Default(), ThreadOptions(),
-                                                "inter_op", thread_num);
+  thread_pool_ = absl::make_unique<thread::ThreadPool>(
+      Env::Default(), ThreadOptions(), "inter_op", thread_num);
   return Status::OK();
 }
 
@@ -86,14 +90,15 @@ Status DatasetOpsTestBase::InitFunctionLibraryRuntime(
   std::vector<std::unique_ptr<Device>> devices;
   TF_RETURN_IF_ERROR(DeviceFactory::AddDevices(
       options, "/job:localhost/replica:0/task:0", &devices));
-  device_mgr_ = MakeUnique<DeviceMgr>(std::move(devices));
+  device_mgr_ = absl::make_unique<DeviceMgr>(std::move(devices));
 
   FunctionDefLibrary proto;
   for (const auto& fdef : flib) *(proto.add_function()) = fdef;
-  lib_def_ = MakeUnique<FunctionLibraryDefinition>(OpRegistry::Global(), proto);
+  lib_def_ =
+      absl::make_unique<FunctionLibraryDefinition>(OpRegistry::Global(), proto);
 
   OptimizerOptions opts;
-  pflr_ = MakeUnique<ProcessFunctionLibraryRuntime>(
+  pflr_ = absl::make_unique<ProcessFunctionLibraryRuntime>(
       device_mgr_.get(), Env::Default(), TF_GRAPH_DEF_VERSION, lib_def_.get(),
       opts, thread_pool_.get(), nullptr /* cluster_flr */);
   flr_ = pflr_->GetFLR("/job:localhost/replica:0/task:0/cpu:0");
@@ -113,9 +118,10 @@ Status DatasetOpsTestBase::RunOpKernel(OpKernel* op_kernel,
   return context->status();
 }
 
-std::unique_ptr<OpKernelContext> DatasetOpsTestBase::CreateOpKernelContext(
-    OpKernel* kernel, gtl::InlinedVector<TensorValue, 4>* inputs) {
-  params_ = MakeUnique<OpKernelContext::Params>();
+Status DatasetOpsTestBase::CreateOpKernelContext(
+    OpKernel* kernel, gtl::InlinedVector<TensorValue, 4>* inputs,
+    std::unique_ptr<OpKernelContext>* context) {
+  params_ = absl::make_unique<OpKernelContext::Params>();
   params_->device = device_.get();
   params_->resource_manager = device_->resource_manager();
   params_->frame_iter = FrameAndIter(0, 0);
@@ -123,19 +129,22 @@ std::unique_ptr<OpKernelContext> DatasetOpsTestBase::CreateOpKernelContext(
   params_->op_kernel = kernel;
   params_->function_library = flr_;
   params_->runner = &runner_;
-  step_container_ = MakeUnique<ScopedStepContainer>(0, [](const string&) {});
+  step_container_ =
+      absl::make_unique<ScopedStepContainer>(0, [](const string&) {});
   params_->step_container = step_container_.get();
   checkpoint::TensorSliceReaderCacheWrapper slice_reader_cache_wrapper;
   params_->slice_reader_cache = &slice_reader_cache_wrapper;
   SetOutputAttrs();
-  return MakeUnique<OpKernelContext>(params_.get());
+  *context = absl::make_unique<OpKernelContext>(params_.get());
+  return Status::OK();
 }
 
-std::unique_ptr<SerializationContext>
-DatasetOpsTestBase::CreateSerializationContext() {
+Status DatasetOpsTestBase::CreateSerializationContext(
+    std::unique_ptr<SerializationContext>* context) {
   SerializationContext::Params params;
   params.flib_def = lib_def_.get();
-  return MakeUnique<SerializationContext>(params);
+  *context = absl::make_unique<SerializationContext>(params);
+  return Status::OK();
 }
 
 Status DatasetOpsTestBase::CheckOpKernelInput(
@@ -148,25 +157,35 @@ Status DatasetOpsTestBase::CheckOpKernelInput(
   return Status::OK();
 }
 
-Tensor* DatasetOpsTestBase::AddDatasetInput(
+Status DatasetOpsTestBase::AddDatasetInput(
     gtl::InlinedVector<TensorValue, 4>* inputs, DataTypeVector input_types,
     DataType dtype, const TensorShape& shape) {
-  CHECK_GT(input_types.size(), inputs->size())
-      << "Adding more inputs than types.";
+  if (input_types.size() < inputs->size()) {
+    return errors::InvalidArgument("Adding more inputs than types: ",
+                                   inputs->size(), " vs. ", input_types.size());
+  }
   bool is_ref = IsRefType(input_types[inputs->size()]);
   Tensor* input = new Tensor(allocator_, dtype, shape);
   tensors_.push_back(input);
   if (is_ref) {
-    CHECK_EQ(RemoveRefType(input_types[inputs->size()]), dtype);
+    DataType expected_dtype = RemoveRefType(input_types[inputs->size()]);
+    if (expected_dtype != dtype) {
+      return errors::InvalidArgument("The input data type is ", dtype,
+                                     " , but expected: ", expected_dtype);
+    }
     inputs->push_back({&lock_for_refs_, input});
   } else {
-    CHECK_EQ(input_types[inputs->size()], dtype);
+    if (input_types[inputs->size()] != dtype) {
+      return errors::InvalidArgument(
+          "The input data type is ", dtype,
+          " , but expected: ", input_types[inputs->size()]);
+    }
     inputs->push_back({nullptr, input});
   }
-  return input;
+  return Status::OK();
 }
 
-void DatasetOpsTestBase::SetOutputAttrs() {
+inline void DatasetOpsTestBase::SetOutputAttrs() {
   allocator_attrs_.clear();
   for (int index = 0; index < params_->op_kernel->num_outputs(); index++) {
     AllocatorAttributes attr;

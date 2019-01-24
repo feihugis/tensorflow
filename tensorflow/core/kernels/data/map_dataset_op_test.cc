@@ -45,11 +45,11 @@ class MapDatasetOpTest : public DatasetOpsTestBase {
   }
 
  protected:
-  // Creates a new MapDataset, meanwhile initializing the operation kernel and
-  // context internally.
+  // Creates a new MapDataset dataset, meanwhile initializing the MapDataset op
+  // kernel and context internally.
   DatasetBase* CreateMapDataset(DatasetBase* input_dataset,
                                 const string& func_name) {
-    CHECK_EQ(map_inputs_.size(), 0);
+    map_inputs_.clear();
     map_kernel_ =
         CreateMapDatasetOpKernel<int64>(input_dataset->name(), func_name);
 
@@ -57,16 +57,20 @@ class MapDatasetOpTest : public DatasetOpsTestBase {
     Tensor dataset_tensor(DT_VARIANT, TensorShape({}));
     TF_CHECK_OK(StoreDatasetInVariantTensor(input_dataset, &dataset_tensor));
     Variant variant = dataset_tensor.scalar<Variant>()();
-    AddDatasetInputFromArray<Variant>(&map_inputs_, map_kernel_->input_types(),
-                                      TensorShape({}), {variant});
+    TF_CHECK_OK(AddDatasetInputFromArray<Variant>(
+        &map_inputs_, map_kernel_->input_types(), TensorShape({}), {variant}));
 
-    map_context_ = CreateOpKernelContext(map_kernel_.get(), &map_inputs_);
+    TF_CHECK_OK(
+        CreateOpKernelContext(map_kernel_.get(), &map_inputs_, &map_context_));
     TF_CHECK_OK(CheckOpKernelInput(*map_kernel_, map_inputs_));
-    return CreateDataset(map_kernel_.get(), map_context_.get());
+    DatasetBase* map_dataset;
+    TF_CHECK_OK(
+        CreateDataset(map_kernel_.get(), map_context_.get(), &map_dataset));
+    return map_dataset;
   }
 
  private:
-  // Creates a new MapDatasetOp kernel. The `input_dataset` parameter should be
+  // Creates a new MapDataset op kernel. The `input_dataset` parameter should be
   // same with the node name of the input dataset for the method
   // `CreateMapDataset()`.
   template <typename T>
@@ -84,7 +88,9 @@ class MapDatasetOpTest : public DatasetOpsTestBase {
                                           {"output_types", map_output_dtypes},
                                           {"use_inter_op_parallelism", true},
                                           {"preserve_cardinality", false}});
-    return CreateOpKernel(map_node_def_);
+    std::unique_ptr<OpKernel> map_op_kernel;
+    TF_CHECK_OK(CreateOpKernel(map_node_def_, &map_op_kernel));
+    return map_op_kernel;
   }
 
  protected:
@@ -121,10 +127,12 @@ TEST_P(DatasetGetNextTest, GetNext) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime(func_lib, cpu_num));
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_name);
-  iterator_ =
-      CreateIterator(map_context_.get(), map_dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(map_context_.get(), &iterator_context_));
+  TF_ASSERT_OK(
+      CreateIterator(iterator_context_.get(), map_dataset_, &iterator_));
 
   bool end_of_sequence = false;
   std::vector<Tensor> out_tensors;
@@ -160,7 +168,8 @@ TEST_F(MapDatasetOpTest, DatasetName) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
   EXPECT_EQ(map_dataset_->name(), kOpName);
 }
@@ -172,7 +181,8 @@ TEST_F(MapDatasetOpTest, DatasetOutputDtypes) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
   DataTypeVector expected_dtypes({DT_INT64});
   EXPECT_EQ(map_dataset_->output_dtypes(), expected_dtypes);
@@ -185,7 +195,8 @@ TEST_F(MapDatasetOpTest, DatasetOutputShapes) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
   std::vector<PartialTensorShape> expected_shapes({{}});
   EXPECT_EQ(map_dataset_->output_shapes().size(), expected_shapes.size());
@@ -208,7 +219,8 @@ TEST_P(DatasetCardinalityTest, Cardinality) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
   EXPECT_EQ(map_dataset_->Cardinality(), expected_cardinality);
 }
@@ -225,9 +237,10 @@ TEST_F(MapDatasetOpTest, DatasetSave) {
 
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
-  serialization_context_ = CreateSerializationContext();
+  TF_ASSERT_OK(CreateSerializationContext(&serialization_context_));
   VariantTensorData data;
   VariantTensorDataWriter writer(&data);
   TF_ASSERT_OK(map_dataset_->Save(serialization_context_.get(), &writer));
@@ -242,10 +255,12 @@ TEST_F(MapDatasetOpTest, IteratorOutputDtypes) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
 
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
-  iterator_ =
-      CreateIterator(map_context_.get(), map_dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(map_context_.get(), &iterator_context_));
+  TF_ASSERT_OK(
+      CreateIterator(iterator_context_.get(), map_dataset_, &iterator_));
   DataTypeVector expected_dtypes({DT_INT64});
   EXPECT_EQ(iterator_->output_dtypes(), expected_dtypes);
 }
@@ -258,10 +273,12 @@ TEST_F(MapDatasetOpTest, IteratorOutputShapes) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
 
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
-  iterator_ =
-      CreateIterator(map_context_.get(), map_dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(map_context_.get(), &iterator_context_));
+  TF_ASSERT_OK(
+      CreateIterator(iterator_context_.get(), map_dataset_, &iterator_));
   std::vector<PartialTensorShape> expected_shapes({{}});
   EXPECT_EQ(iterator_->output_shapes().size(), expected_shapes.size());
   for (int i = 0; i < map_dataset_->output_shapes().size(); ++i) {
@@ -277,10 +294,12 @@ TEST_F(MapDatasetOpTest, IteratorOutputPrefix) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime({func_def}, cpu_num));
 
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_def.signature().name());
-  iterator_ =
-      CreateIterator(map_context_.get(), map_dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(map_context_.get(), &iterator_context_));
+  TF_ASSERT_OK(
+      CreateIterator(iterator_context_.get(), map_dataset_, &iterator_));
   EXPECT_EQ(iterator_->prefix(), "Iterator::Map");
 }
 
@@ -303,17 +322,19 @@ TEST_P(IteratorRoundtripTest, Roundtrip) {
   TF_ASSERT_OK(InitThreadPool(thread_num));
   TF_ASSERT_OK(InitFunctionLibraryRuntime(func_lib, cpu_num));
 
-  range_dataset_ = CreateRangeDataset<int64>(start, end, step, "range");
+  TF_ASSERT_OK(
+      CreateRangeDataset<int64>(start, end, step, "range", &range_dataset_));
   map_dataset_ = CreateMapDataset(range_dataset_, func_name);
-  iterator_ =
-      CreateIterator(map_context_.get(), map_dataset_, &iterator_context_);
+  TF_ASSERT_OK(CreateIteratorContext(map_context_.get(), &iterator_context_));
+  TF_ASSERT_OK(
+      CreateIterator(iterator_context_.get(), map_dataset_, &iterator_));
   std::vector<Tensor> out_tensors;
   bool end_of_sequence = false;
   for (int i = 0; i < breakpoint; i++) {
     TF_EXPECT_OK(GetNext(iterator_.get(), iterator_context_.get(), &out_tensors,
                          &end_of_sequence));
   }
-  serialization_context_ = CreateSerializationContext();
+  TF_ASSERT_OK(CreateSerializationContext(&serialization_context_));
   VariantTensorData data;
   VariantTensorDataWriter writer(&data);
   TF_ASSERT_OK(iterator_->Save(serialization_context_.get(), &writer));
