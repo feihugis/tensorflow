@@ -32,6 +32,7 @@ Status DatasetOpsTestBase::CreateDataset(OpKernel* kernel,
                                          DatasetBase** const dataset) {
   TF_RETURN_IF_ERROR(RunOpKernel(kernel, context));
   // Assume that DatasetOp has only one output.
+  DCHECK(context->num_outputs() == 1);
   TF_RETURN_IF_ERROR(GetDatasetFromContext(context, 0, dataset));
   return Status::OK();
 }
@@ -44,19 +45,6 @@ Status DatasetOpsTestBase::CreateIteratorContext(
   params.function_handle_cache = function_handle_cache_.get();
   *iterator_context = absl::make_unique<IteratorContext>(params);
   return Status::OK();
-}
-
-Status DatasetOpsTestBase::CreateIterator(
-    IteratorContext* context, const DatasetBase* dataset,
-    std::unique_ptr<IteratorBase>* iterator) {
-  return dataset->MakeIterator(context, "Iterator", iterator);
-}
-
-Status DatasetOpsTestBase::GetNext(IteratorBase* iterator,
-                                   IteratorContext* iterator_context,
-                                   std::vector<Tensor>* out_tensors,
-                                   bool* end_of_sequence) {
-  return iterator->GetNext(iterator_context, out_tensors, end_of_sequence);
 }
 
 Status DatasetOpsTestBase::GetDatasetFromContext(OpKernelContext* context,
@@ -133,8 +121,21 @@ Status DatasetOpsTestBase::CreateOpKernelContext(
       absl::make_unique<ScopedStepContainer>(0, [](const string&) {});
   params_->step_container = step_container_.get();
   checkpoint::TensorSliceReaderCacheWrapper slice_reader_cache_wrapper;
-  params_->slice_reader_cache = &slice_reader_cache_wrapper;
-  SetOutputAttrs();
+  slice_reader_cache_ =
+      absl::make_unique<checkpoint::TensorSliceReaderCacheWrapper>();
+  params_->slice_reader_cache = slice_reader_cache_.get();
+
+  // Set the allocator attributes for the outputs.
+  allocator_attrs_.clear();
+  for (int index = 0; index < params_->op_kernel->num_outputs(); index++) {
+    AllocatorAttributes attr;
+    const bool on_host =
+        (params_->op_kernel->output_memory_types()[index] == HOST_MEMORY);
+    attr.set_on_host(on_host);
+    allocator_attrs_.emplace_back(attr);
+  }
+  params_->output_attr_array = gtl::vector_as_array(&allocator_attrs_);
+
   *context = absl::make_unique<OpKernelContext>(params_.get());
   return Status::OK();
 }
@@ -165,36 +166,30 @@ Status DatasetOpsTestBase::AddDatasetInput(
                                    inputs->size(), " vs. ", input_types.size());
   }
   bool is_ref = IsRefType(input_types[inputs->size()]);
-  Tensor* input = new Tensor(allocator_, dtype, shape);
-  tensors_.push_back(input);
+  std::unique_ptr<Tensor> input =
+      absl::make_unique<Tensor>(allocator_, dtype, shape);
+
   if (is_ref) {
     DataType expected_dtype = RemoveRefType(input_types[inputs->size()]);
     if (expected_dtype != dtype) {
       return errors::InvalidArgument("The input data type is ", dtype,
                                      " , but expected: ", expected_dtype);
     }
-    inputs->push_back({&lock_for_refs_, input});
+    inputs->push_back({&lock_for_refs_, input.get()});
   } else {
     if (input_types[inputs->size()] != dtype) {
       return errors::InvalidArgument(
           "The input data type is ", dtype,
           " , but expected: ", input_types[inputs->size()]);
     }
-    inputs->push_back({nullptr, input});
+    inputs->push_back({nullptr, input.get()});
   }
-  return Status::OK();
-}
 
-inline void DatasetOpsTestBase::SetOutputAttrs() {
-  allocator_attrs_.clear();
-  for (int index = 0; index < params_->op_kernel->num_outputs(); index++) {
-    AllocatorAttributes attr;
-    const bool on_host =
-        (params_->op_kernel->output_memory_types()[index] == HOST_MEMORY);
-    attr.set_on_host(on_host);
-    allocator_attrs_.emplace_back(attr);
-  }
-  params_->output_attr_array = gtl::vector_as_array(&allocator_attrs_);
+  // TODO: figure out how to avoid using a member variable to garbage collect
+  // the inputs.
+  tensors_.push_back(std::move(input));
+
+  return Status::OK();
 }
 
 }  // namespace data

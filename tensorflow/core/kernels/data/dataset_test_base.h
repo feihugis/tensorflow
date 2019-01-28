@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_KERNELS_DATA_DATASET_TEST_BASE_H
 #define TENSORFLOW_CORE_KERNELS_DATA_DATASET_TEST_BASE_H
 
-#include <memory>
-#include <tuple>
 #include <vector>
 
 #include "tensorflow/core/framework/dataset.h"
@@ -47,39 +45,15 @@ class DatasetOpsTestBase : public ::testing::Test {
     allocator_ = device_->GetAllocator(AllocatorAttributes());
   }
 
-  ~DatasetOpsTestBase() {
-    gtl::STLDeleteElements(&tensors_);
-    function_handle_cache_.reset();
-  }
+  ~DatasetOpsTestBase() {}
 
   // Creates a new op kernel based on the node definition.
   Status CreateOpKernel(const NodeDef& node_def,
                         std::unique_ptr<OpKernel>* op_kernel);
 
-  // Creates a new dataset. Here we assume that the dataset operation has only
-  // one output stored in the OpKernelContext.
+  // Creates a new dataset.
   Status CreateDataset(OpKernel* kernel, OpKernelContext* context,
                        DatasetBase** const dataset);
-
-  // Creates a new iterator for iterating over the range of elements in this
-  // dataset.
-  //
-  // This method may be called multiple times on the same dataset, and the
-  // resulting iterators will have distinct state.
-  Status CreateIterator(IteratorContext* context, const DatasetBase* dataset,
-                        std::unique_ptr<IteratorBase>* iterator);
-
-  // Gets the next output from the range that this iterator is traversing.
-  //
-  // If at least one output remains in this iterator's range, that
-  // output will be stored in `*out_tensors` and `false` will be
-  // stored in `*end_of_sequence`.
-  //
-  // If no more outputs remain in this iterator's range, `true` will
-  // be stored in `*end_of_sequence`, and the content of `*out_tensors` will be
-  // undefined.
-  Status GetNext(IteratorBase* iterator, IteratorContext* iterator_context,
-                 std::vector<Tensor>* out_tensors, bool* end_of_sequence);
 
   // Creates a new RangeDataset op kernel. `T` specifies the output dtype of the
   // op kernel.
@@ -96,14 +70,14 @@ class DatasetOpsTestBase : public ::testing::Test {
     return Status::OK();
   }
 
-  // Creates a new RangeDataset dataset. `U` specifies the output dtype of the
+  // Creates a new RangeDataset dataset. `T` specifies the output dtype of the
   // RangeDataset op kernel.
-  template <typename U>
+  template <typename T>
   Status CreateRangeDataset(int64 start, int64 end, int64 step,
                             StringPiece node_name,
                             DatasetBase** range_dataset) {
     std::unique_ptr<OpKernel> range_kernel;
-    TF_RETURN_IF_ERROR(CreateRangeDatasetOpKernel<U>(node_name, &range_kernel));
+    TF_RETURN_IF_ERROR(CreateRangeDatasetOpKernel<T>(node_name, &range_kernel));
     gtl::InlinedVector<TensorValue, 4> range_inputs;
     TF_RETURN_IF_ERROR(AddDatasetInputFromArray<int64>(
         &range_inputs, range_kernel->input_types(), TensorShape({}), {start}));
@@ -135,8 +109,7 @@ class DatasetOpsTestBase : public ::testing::Test {
   Status InitFunctionLibraryRuntime(const std::vector<FunctionDef>& flib,
                                     int cpu_num);
 
-  // Runs an operation producing outputs. The `context` need to be initialized
-  // (see `CreateOpKernelContext()` ) before running this method.
+  // Runs an operation producing outputs.
   Status RunOpKernel(OpKernel* op_kernel, OpKernelContext* context);
 
   // Checks that the size of `inputs` matches the requirement of the op kernel.
@@ -180,9 +153,6 @@ class DatasetOpsTestBase : public ::testing::Test {
                          DataTypeVector input_types, DataType dtype,
                          const TensorShape& shape);
 
-  // Sets the allocator attributes for the operation outputs.
-  void SetOutputAttrs();
-
  protected:
   std::unique_ptr<Device> device_;
   DeviceType device_type_;
@@ -197,9 +167,11 @@ class DatasetOpsTestBase : public ::testing::Test {
   std::unique_ptr<DeviceMgr> device_mgr_;
   std::unique_ptr<FunctionLibraryDefinition> lib_def_;
   std::unique_ptr<OpKernelContext::Params> params_;
+  std::unique_ptr<checkpoint::TensorSliceReaderCacheWrapper>
+      slice_reader_cache_;
   std::unique_ptr<thread::ThreadPool> thread_pool_;
-  std::vector<Tensor*> tensors_;  // Owns Tensors.
-  mutex lock_for_refs_;           // Used as the Mutex for inputs added as refs.
+  std::vector<std::unique_ptr<Tensor>> tensors_;  // Owns tensors.
+  mutex lock_for_refs_;  // Used as the Mutex for inputs added as refs.
 };
 
 }  // namespace data
