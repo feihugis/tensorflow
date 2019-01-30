@@ -286,6 +286,7 @@ TEST_P(DatasetCardinalityTest, Cardinality) {
   TF_ASSERT_OK(CreateRangeDataset<int64>(test_params.start, test_params.end,
                                          test_params.step, "range",
                                          &range_dataset));
+  core::ScopedUnref scored_unref_range_dataset(range_dataset);
 
   std::unique_ptr<OpKernel> map_kernel;
   TF_ASSERT_OK(CreateMapDatasetOpKernel<int64>(
@@ -479,6 +480,8 @@ TEST_P(IteratorRoundtripTest, Roundtrip) {
   TF_ASSERT_OK(CreateRangeDataset<int64>(test_params.start, test_params.end,
                                          test_params.step, "range",
                                          &range_dataset));
+  core::ScopedUnref scored_unref_range_dataset(range_dataset);
+
   std::unique_ptr<OpKernel> map_kernel;
   TF_ASSERT_OK(CreateMapDatasetOpKernel<int64>(
       range_dataset->name(), test_params.func_name, &map_kernel));
