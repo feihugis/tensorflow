@@ -158,19 +158,22 @@ Status CapturedFunction::Instantiate(
     IteratorContext* ctx, std::unique_ptr<InstantiatedCapturedFunction>*
                               instantiated_captured_function) {
   // The context's runtime will be used for all subsequent calls.
+  VLOG(2) << "Start CapturedFunction::Instantiate";
   FunctionLibraryRuntime* lib = ctx->lib();
   FunctionLibraryRuntime::InstantiateOptions inst_opts;
   inst_opts.lib_def = &lib_def_;
   inst_opts.create_kernels_eagerly = true;
   if (!use_inter_op_parallelism_) {
     inst_opts.executor_type = "SINGLE_THREADED_EXECUTOR";
+    //inst_opts.executor_type = "";
   }
   inst_opts.is_multi_device_function = is_multi_device_function_;
 
   // We infer the target device from the function library runtime.
   DCHECK(lib->device() != nullptr);
   inst_opts.target = lib->device()->name();
-
+  VLOG(2) << "CapturedFunction::Instantiate::is_multi_device_function_: "
+            << is_multi_device_function_;
   if (is_multi_device_function_) {
     // Compute devices of non-captured inputs.
     //
@@ -209,14 +212,15 @@ Status CapturedFunction::Instantiate(
   FunctionLibraryRuntime::Handle f_handle;
   TF_RETURN_IF_ERROR(ctx->function_handle_cache()->Instantiate(
       func_.name(), AttrSlice(&func_.attr()), inst_opts, &f_handle));
-
+  VLOG(2) << "CapturedFunction::Instantiate 2";
   DataTypeVector ret_types;
   TF_RETURN_IF_ERROR(lib->GetRetTypes(f_handle, &ret_types));
-
+  VLOG(2) << "CapturedFunction::Instantiate 3";
   *instantiated_captured_function =
       absl::WrapUnique<InstantiatedCapturedFunction>(
           new InstantiatedCapturedFunction(lib, f_handle, std::move(ret_types),
                                            *ctx->runner(), this));
+  VLOG(2) << "Finish CapturedFunction::Instantiate";
   return Status::OK();
 }
 
@@ -490,6 +494,7 @@ void InstantiatedCapturedFunction::RunAsync(
   // NOTE(mrry): This method does not transfer ownership of `ctx`, and it may
   // be deleted before `done` is called. Take care not to capture `ctx` in any
   // code that may execute asynchronously in this function.
+  VLOG(2) << "Start InstantiatedCapturedFunction::RunAsync";
   OwnedArgsCallFrame* frame = new OwnedArgsCallFrame(
       std::move(args), &captured_func_->captured_inputs(), ret_types_);
 
@@ -559,7 +564,8 @@ void InstantiatedCapturedFunction::RunAsync(
       },
       std::move(done), ctx->model(), ctx->stats_aggregator(), prefix,
       std::move(stats_collector), std::placeholders::_1);
-
+  VLOG(2) << "Start InstantiatedCapturedFunction::RunAsync::lib_->Run"
+             ": f_handle_ = " << f_handle_;
   lib_->Run(f_opts, f_handle_, frame, std::move(callback));
 }
 

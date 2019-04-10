@@ -78,6 +78,7 @@ Status NewExecutor(const string& executor_type,
                    std::unique_ptr<const Graph> graph,
                    std::unique_ptr<Executor>* out_executor) {
   ExecutorFactory* factory = nullptr;
+  VLOG(4) << "NewExecutor::executor_type = " << executor_type;
   TF_RETURN_IF_ERROR(ExecutorFactory::GetFactory(executor_type, &factory));
   return factory->NewExecutor(params, std::move(graph), out_executor);
 }

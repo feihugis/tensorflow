@@ -116,6 +116,7 @@ Rendezvous::~Rendezvous() {}
 
 Status Rendezvous::Recv(const ParsedKey& key, const Args& recv_args,
                         Tensor* val, bool* is_dead, int64 timeout_ms) {
+  VLOG(2) << "Rendezvous::Recv start to receive";
   Status ret;
   Notification n;
   RecvAsync(key, recv_args,
@@ -137,6 +138,7 @@ Status Rendezvous::Recv(const ParsedKey& key, const Args& recv_args,
   } else {
     n.WaitForNotification();
   }
+  VLOG(2) << "Rendezvous::Recv finishes to receive " << val->DebugString();
   return ret;
 }
 
@@ -153,7 +155,7 @@ class LocalRendezvousImpl : public Rendezvous {
   Status Send(const ParsedKey& key, const Args& send_args, const Tensor& val,
               const bool is_dead) override {
     uint64 key_hash = KeyHash(key.FullKey());
-    VLOG(2) << "Send " << this << " " << key_hash << " " << key.FullKey();
+    VLOG(5) << "****** LocalRendezvousImpl::Send " << this << " " << key_hash << " " << key.FullKey();
 
     mu_.lock();
     if (!status_.ok()) {
@@ -196,7 +198,7 @@ class LocalRendezvousImpl : public Rendezvous {
   void RecvAsync(const ParsedKey& key, const Args& recv_args,
                  DoneCallback done) override {
     uint64 key_hash = KeyHash(key.FullKey());
-    VLOG(2) << "Recv " << this << " " << key_hash << " " << key.FullKey();
+    VLOG(2) << "Start LocalRendezvous::RecvAsync";
 
     mu_.lock();
     if (!status_.ok()) {

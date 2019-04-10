@@ -77,6 +77,8 @@ ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime(
     return;
   }
   for (Device* d : device_mgr->ListDevices()) {
+    VLOG(2) << "ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime::"
+               "device: " << d->DebugString();
     flr_map_[d] = NewFunctionLibraryRuntime(
         device_mgr, env, d, graph_def_version, lib_def_, default_thread_pool,
         optimizer_options, custom_kernel_creator, this);

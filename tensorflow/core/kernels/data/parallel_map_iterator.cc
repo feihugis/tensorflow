@@ -219,6 +219,7 @@ class ParallelMapIterator : public DatasetBaseIterator {
   void CallFunction(const std::shared_ptr<IteratorContext>& ctx,
                     const std::shared_ptr<InvocationResult>& result)
       LOCKS_EXCLUDED(*mu_) {
+    VLOG(0) << "Start ParallelMapIterator::CallFunction";
     // Get the next input element.
     std::vector<Tensor> input_element;
     result->status =
@@ -238,6 +239,7 @@ class ParallelMapIterator : public DatasetBaseIterator {
     parallel_map_functor_->MapFunc(ctx.get(), prefix(),
                                    std::move(input_element),
                                    &result->return_values, std::move(done));
+     VLOG(0) << "Finish ParallelMapIterator::CallFunction";
   }
 
   Status ProcessResult(IteratorContext* ctx,
@@ -271,6 +273,7 @@ class ParallelMapIterator : public DatasetBaseIterator {
 
   void RunnerThread(const std::shared_ptr<IteratorContext>& ctx)
       LOCKS_EXCLUDED(*mu_) {
+    VLOG(4) << "Start ParallelMapIterator::RunnerThread";
     RecordStart(ctx.get());
     auto cleanup = gtl::MakeCleanup([this, ctx] { RecordStop(ctx.get()); });
     std::vector<std::shared_ptr<InvocationResult>> new_calls;

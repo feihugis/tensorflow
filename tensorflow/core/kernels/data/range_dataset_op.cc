@@ -114,8 +114,10 @@ class RangeDatasetOp : public DatasetOpKernel {
         }
         out_tensors->reserve(1);
         out_tensors->emplace_back(next_);
+        VLOG(5) << "****** RangeDatasetOp::GetNextInternal::out_tensors:" << next_;
         *end_of_sequence = false;
         next_ += dataset()->step_;
+        VLOG(5) << "****** RangeDatasetOp::GetNextInternal::next_:" << next_;
 
         return Status::OK();
       }
@@ -129,6 +131,7 @@ class RangeDatasetOp : public DatasetOpKernel {
       Status SaveInternal(IteratorStateWriter* writer) override {
         mutex_lock l(mu_);
         TF_RETURN_IF_ERROR(writer->WriteScalar(full_name("next"), next_));
+        VLOG(5) << "****** RangeDatasetOp::SaveInternal::next_: " << next_;
         return Status::OK();
       }
 
@@ -136,6 +139,7 @@ class RangeDatasetOp : public DatasetOpKernel {
                              IteratorStateReader* reader) override {
         mutex_lock l(mu_);
         TF_RETURN_IF_ERROR(reader->ReadScalar(full_name("next"), &next_));
+        VLOG(5) << "****** RangeDatasetOp::RestoreInternal::next_: " << next_;
         return Status::OK();
       }
 

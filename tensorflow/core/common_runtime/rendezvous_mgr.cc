@@ -39,7 +39,7 @@ IntraProcessRendezvous::~IntraProcessRendezvous() { local_->Unref(); }
 Status IntraProcessRendezvous::Send(const ParsedKey& parsed,
                                     const Rendezvous::Args& args,
                                     const Tensor& val, const bool is_dead) {
-  VLOG(1) << "IntraProcessRendezvous Send " << this << " " << parsed.FullKey();
+  VLOG(5) << "****** IntraProcessRendezvous::Send " << this << " " << parsed.FullKey();
   {
     mutex_lock l(mu_);
     if (!status_.ok()) return status_;
@@ -116,7 +116,7 @@ void IntraProcessRendezvous::SameWorkerRecvDone(
 void IntraProcessRendezvous::RecvAsync(const ParsedKey& parsed,
                                        const Rendezvous::Args& recv_args,
                                        DoneCallback done) {
-  VLOG(1) << "IntraProcessRendezvous Recv " << this << " " << parsed.FullKey();
+  VLOG(2) << "Start IntroPrRendezvous::RecvAsync";
 
   // Recv the tensor from local_.
   local_->RecvAsync(

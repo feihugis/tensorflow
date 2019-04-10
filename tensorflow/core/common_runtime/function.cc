@@ -170,7 +170,9 @@ class FunctionLibraryRuntimeOverlay : public FunctionLibraryRuntime {
  public:
   FunctionLibraryRuntimeOverlay(FunctionLibraryRuntime* base_flr,
                                 const FunctionLibraryDefinition* lib_def)
-      : base_flr_(base_flr), lib_def_(lib_def) {}
+      : base_flr_(base_flr), lib_def_(lib_def) {
+    VLOG(2) << "Start FunctionLibraryRuntimeOverlay::FunctionLibraryRuntimeOverlay";
+  }
   ~FunctionLibraryRuntimeOverlay() override;
 
   Status Instantiate(const string& function_name, AttrSlice attrs,
@@ -219,6 +221,7 @@ FunctionLibraryRuntimeOverlay::~FunctionLibraryRuntimeOverlay() = default;
 Status FunctionLibraryRuntimeOverlay::Instantiate(
     const string& function_name, AttrSlice attrs,
     const InstantiateOptions& options, Handle* handle) {
+  VLOG(2) << "Start FunctionLibraryRuntimeOverlay::Instantiate";
   // We automatically set the `lib_def` option for all instantiations, if the
   // caller doesn't set this option explicitly.
   if (!options.lib_def && lib_def_) {
@@ -417,6 +420,10 @@ class FunctionLibraryRuntimeImpl : public FunctionLibraryRuntime {
   Status CreateKernel(const NodeDef& ndef,
                       const FunctionLibraryDefinition* lib_def,
                       OpKernel** kernel);
+  Status CreateKernel(const NodeDef& ndef,
+                      const FunctionLibraryDefinition* lib_def,
+                      const string& executor_type,
+                      OpKernel** kernel);
   Status FunctionDefToBody(const FunctionDef& fdef, AttrSlice attrs,
                            const FunctionLibraryDefinition* lib_def,
                            std::unique_ptr<FunctionBody>* fbody);
@@ -465,6 +472,8 @@ FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl(
     return CreateKernel(ndef, kernel);
   };
   thread::ThreadPool* pool = nullptr;
+  VLOG(2) << "Create FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl "
+          << this;
   if (device_ != nullptr) {
     pool = device_->tensorflow_device_thread_pool();
   }
@@ -476,6 +485,7 @@ FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl(
       pool->Schedule(std::move(c));
     };
   }
+  VLOG(2) << "FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl::pool size: " << pool->NumThreads();
 }
 
 FunctionLibraryRuntimeImpl::~FunctionLibraryRuntimeImpl() {}
@@ -594,6 +604,72 @@ Status FunctionLibraryRuntimeImpl::CreateKernel(
   if (lib_def != base_lib_def_) {
     options.lib_def = lib_def;
   }
+
+  Handle handle;
+  TF_RETURN_IF_ERROR(
+      Instantiate(ndef.op(), AttrSlice(&ndef.attr()), options, &handle));
+
+  const FunctionBody* fbody = GetFunctionBody(handle);
+  CHECK_NOTNULL(fbody);
+
+  // TODO(zhifengc): For now, we assume int32 and resources are always on host
+  // memory and other types are always on device memory. We should do type
+  // inference over function body to derive the correct input/output memory
+  // types.
+  MemoryTypeVector input_memory_types;
+  for (const auto& t : fbody->arg_types) {
+    input_memory_types.push_back(MTypeFromDType(t));
+  }
+  MemoryTypeVector output_memory_types;
+  for (const auto& t : fbody->ret_types) {
+    output_memory_types.push_back(MTypeFromDType(t));
+  }
+
+  // Constructs a CallOp kernel for running the instantiated function.
+  auto device_type = DeviceType(device_->attributes().device_type());
+  OpKernelConstruction construction(
+      device_type, device_, device_->GetAllocator(AllocatorAttributes()), &ndef,
+      &fbody->fdef.signature(), this, fbody->arg_types, input_memory_types,
+      fbody->ret_types, output_memory_types, graph_def_version_, &s);
+  if (s.ok()) {
+    *kernel = new CallOp(handle, &construction);
+  }
+  return s;
+}
+
+Status FunctionLibraryRuntimeImpl::CreateKernel(
+    const NodeDef& ndef, const FunctionLibraryDefinition* lib_def,
+    const string& executor_type, OpKernel** kernel) {
+  // If a custom kernel creator is given, try that.
+  Status s;
+  if (custom_kernel_creator_ != nullptr &&
+      custom_kernel_creator_->CanCreateKernel(*this, ndef)) {
+    std::unique_ptr<OpKernel> ret;
+    s = custom_kernel_creator_->CreateKernel(this, ndef, &ret);
+    if (s.ok()) {
+      *kernel = ret.release();
+    } else {
+      VLOG(2) << "Custom creator error: " << s;
+    }
+    return s;
+  }
+
+  if (lib_def->Find(ndef.op()) == nullptr) {
+    // A primitive operation. Creates the registered kernel.
+    return CreateNonCachedKernel(device_, this, ndef, graph_def_version_,
+                                 kernel);
+  }
+
+  // Try to instantiate this function for the func/attr. Maybe it's
+  // cached already.
+  VLOG(4) << "FunctionLibraryRuntimeImpl::CreateKernel: instantiate the "
+             "function = " << ndef.op();
+  InstantiateOptions options;
+  if (lib_def != base_lib_def_) {
+    options.lib_def = lib_def;
+  }
+  options.executor_type = executor_type;
+
   Handle handle;
   TF_RETURN_IF_ERROR(
       Instantiate(ndef.op(), AttrSlice(&ndef.attr()), options, &handle));
@@ -697,6 +773,10 @@ bool FunctionLibraryRuntimeImpl::IsLocalTarget(
 Status FunctionLibraryRuntimeImpl::Instantiate(
     const string& function_name, AttrSlice attrs,
     const InstantiateOptions& options, Handle* handle) {
+  VLOG(2) << "Start FunctionLibraryRuntimeImpl::Instantiate function_name = "
+          << function_name << ", with items_.size(): " << items_.size()
+          << "; !IsLocalTarget(options) = " << (!IsLocalTarget(options))
+          << "; " << this;
   if (!IsLocalTarget(options)) {
     return parent_->Instantiate(function_name, attrs, options, handle);
   }
@@ -706,10 +786,12 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
   InstantiateOptions options_copy(options);
   options_copy.target = device_name_;
   const string key = Canonicalize(function_name, attrs, options_copy);
-
+  VLOG(2) << "FunctionLibraryRuntimeImpl::Instantiate::key = " << key;
   {
     mutex_lock l(mu_);
     *handle = parent_->GetHandle(key);
+    VLOG(2) << "FunctionLibraryRuntimeImpl::Instantiate::handle_0= "
+               << *handle;
     if (*handle != kInvalidHandle) {
       FunctionLibraryRuntime::LocalHandle handle_on_device =
           parent_->GetHandleOnDevice(device_name_, *handle);
@@ -724,6 +806,8 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
                                 " not found in items.");
       }
       ++item_handle->second->instantiation_counter;
+      VLOG(2) << "Finish FunctionLibraryRuntimeImpl::Instantiate with items_.size() "
+             "= " << items_.size() << "; " << &items_;
       return Status::OK();
     }
   }
@@ -753,10 +837,15 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
     TF_RETURN_IF_ERROR(FunctionDefToBody(*fdef, attrs, lib_def, &fbody));
   }
 
+  VLOG(2) << "FunctionLibraryRuntimeImpl::Instantiate::fbody.graph = "
+          << fbody->graph->ToGraphDefDebug().DebugString();
+
   LocalHandle local_handle;
   {
     mutex_lock l(mu_);
     *handle = parent_->GetHandle(key);
+    VLOG(2) << "FunctionLibraryRuntimeImpl::Instantiate::handle_1= "
+               << *handle;
     if (*handle != kInvalidHandle) {
       local_handle = parent_->GetHandleOnDevice(device_name_, *handle);
       ++items_[local_handle]->instantiation_counter;
@@ -772,6 +861,9 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
             new FunctionLibraryRuntimeOverlay(this, options.lib_def);
       }
       local_handle = next_handle_++;
+      VLOG(4) << "FunctionLibraryRuntimeImpl::Instantiate items_.emplace() "
+                 "with local_handle = " << local_handle
+                 << "; next_handle_ = " << next_handle_;
       items_.emplace(local_handle, std::unique_ptr<Item>(item));
     }
   }
@@ -779,6 +871,16 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
   if (options.create_kernels_eagerly) {
     Item* item;
     TF_RETURN_IF_ERROR(GetOrCreateItem(local_handle, &item));
+  }
+
+
+  VLOG(2) << "Finish FunctionLibraryRuntimeImpl::Instantiate " << function_name
+        << "with items_.size() = " << items_.size() << "; " << &items_;
+
+  for(const auto& item : items_) {
+    VLOG(2) << "FunctionLibraryRuntimeImpl::Instantiate::item.handle = "
+            << item.first << "; item.executor_type = "
+            << item.second->executor_type;
   }
 
   return Status::OK();
@@ -886,6 +988,7 @@ void PruneFunctionBody(const FunctionDef& fdef, Graph* g) {
 }  // namespace
 
 Status FunctionLibraryRuntimeImpl::CreateItem(Item** item) {
+  VLOG(2) << "Start FunctionLibraryRuntimeImpl::CreateItem";
   const FunctionBody* fbody;
   const FunctionLibraryDefinition* lib_def;
   string executor_type;
@@ -917,16 +1020,21 @@ Status FunctionLibraryRuntimeImpl::CreateItem(Item** item) {
   if (lib_def == base_lib_def_) {
     params.create_kernel = create_kernel_;
   } else {
-    params.create_kernel = [this, lib_def](const NodeDef& ndef,
+    params.create_kernel = [this, lib_def, executor_type](const NodeDef& ndef,
                                            OpKernel** kernel) {
-      return CreateKernel(ndef, lib_def, kernel);
+      return CreateKernel(ndef, lib_def, executor_type, kernel);
+      //return CreateKernel(ndef, lib_def, kernel);
     };
   }
   params.delete_kernel = [](OpKernel* kernel) {
     DeleteNonCachedKernel(kernel);
   };
   Graph* graph = g.get();
+  VLOG(2) << "FunctionLibraryRuntimeImpl::CreateItem::graph: \n"
+          << graph->ToGraphDefDebug().DebugString();
   std::unique_ptr<Executor> exec;
+  VLOG(2) << "FunctionLibraryRuntimeImpl::CreateItem::executor_type = "
+          << executor_type;
   TF_RETURN_IF_ERROR(NewExecutor(executor_type, params, std::move(g), &exec));
   {
     // Guard item since it is already inserted in items_.
@@ -936,6 +1044,10 @@ Status FunctionLibraryRuntimeImpl::CreateItem(Item** item) {
       (*item)->exec = exec.release();
     }
   }
+  VLOG(2) << "FunctionLibraryRuntimeImpl::CreateItem::(*item)->graph::"
+             "num_edges = " << (*item)->graph->num_edges()
+             << "; num_nodes = " << (*item)->graph->num_nodes()
+             << "; executor = " << (*item)->exec;
   return Status::OK();
 }
 
@@ -950,6 +1062,8 @@ Status FunctionLibraryRuntimeImpl::GetOrCreateItem(LocalHandle local_handle,
     }
     *item = iter->second.get();
     if ((*item)->exec != nullptr) {
+      VLOG(4) << "FunctionLibraryRuntimeImpl::GetOrCreateItem: find the item by "
+                 "local_handle = " << local_handle;
       return Status::OK();
     }
   }
@@ -1145,6 +1259,9 @@ void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
 void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
                                      CallFrameInterface* frame,
                                      DoneCallback done) {
+  VLOG(2) << "Start FunctionLibraryRuntimeImpl::Run"
+          << "; items_.size() = " << items_.size()
+          << "; handle = " << handle;
   if (opts.cancellation_manager && opts.cancellation_manager->IsCancelled()) {
     done(errors::Cancelled(""));
     return;
@@ -1172,6 +1289,8 @@ void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
 
   Item* item = nullptr;
   Status s = GetOrCreateItem(local_handle, &item);
+  VLOG(4) << "FunctionLibraryRuntimeImpl::Run: item.graph = "
+          << item->func_graph->fdef.DebugString();
   if (!s.ok()) {
     done(s);
     return;

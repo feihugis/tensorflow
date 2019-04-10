@@ -88,6 +88,9 @@ FunctionDef XTimesTwoInt32();
 FunctionDef XTimesFour();
 
 // x:T -> ((x * 2) * 2) * 2.
+FunctionDef XTimesEight();
+
+// x:T -> ((x * 2) * 2) * 2.
 FunctionDef XTimes16();
 
 // w:T, x:T, b:T -> MatMul(w, x) + b

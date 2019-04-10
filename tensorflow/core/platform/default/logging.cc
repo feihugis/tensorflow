@@ -207,7 +207,7 @@ int64 MinVLogLevelFromEnv() {
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
   return 0;
 #else
-  const char* tf_env_var_val = getenv("TF_CPP_MIN_VLOG_LEVEL");
+  const char* tf_env_var_val = "4"; //getenv("TF_CPP_MIN_VLOG_LEVEL");
   return LogLevelStrToInt(tf_env_var_val);
 #endif
 }

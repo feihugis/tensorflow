@@ -90,6 +90,8 @@ class SingleThreadedExecutorImpl : public Executor {
       }
 
       KernelState& kernel_state = kernels_[i];
+      VLOG(4) << "SingleThreadedExecutorImpl::Initialize: create_kernel for "
+                 "node: " << SummarizeNode(*n);
       TF_RETURN_IF_ERROR(params_.create_kernel(n->def(), &kernel_state.kernel));
       kernel_state.num_inputs = n->num_inputs();
       kernel_state.num_outputs = n->num_outputs();
@@ -191,6 +193,7 @@ class SingleThreadedExecutorImpl : public Executor {
     // * In an error case (see below), we use the connectivity information in
     //   `KernelState::output_locations` to determine which locations have been
     //   initialized, and manually destroy them.
+    VLOG(4) << "Start SingleThreadedExecutorImpl::RunAsync";
     std::vector<ManualConstructor<Tensor>> inputs(total_num_inputs_);
 
     // TODO(mrry): Can we avoid copying into these vectors? Consider modifying
@@ -260,6 +263,8 @@ class SingleThreadedExecutorImpl : public Executor {
       OpKernelContext ctx(&params, num_outputs);
 
       // Actually execute the kernel.
+      VLOG(2) << "SingleThreadedExecutorImpl::RunAsync: start to compute the "
+                 "kernel: " << kernel_state.kernel->def().DebugString();
       device->Compute(kernel_state.kernel, &ctx);
 
       if (!ctx.status().ok()) {

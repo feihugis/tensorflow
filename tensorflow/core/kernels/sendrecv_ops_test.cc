@@ -33,6 +33,7 @@ class DummyRendezvous : public Rendezvous {
   }
   void RecvAsync(const ParsedKey& key, const Args& args,
                  DoneCallback done) override {
+    VLOG(2) << "Start DummyRendezvous::RecvAsync";
     static Tensor* t = new Tensor(DT_FLOAT, TensorShape({0}));
     done(Status::OK(), args, args, *t, false);
   }

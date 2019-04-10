@@ -66,6 +66,7 @@ class SimpleRendezvous : public Rendezvous {
 
   void RecvAsync(const ParsedKey& parsed, const Args& recv_args,
                  DoneCallback done) override {
+    VLOG(2) << "Start SimpleRendezvous::RecvAsync";
     Tensor tensor;
     Status status = Status::OK();
     {
@@ -102,6 +103,7 @@ Status GraphRunner::Run(Graph* graph, FunctionLibraryRuntime* function_library,
                         const NamedTensorList& inputs,
                         const std::vector<string>& output_names,
                         std::vector<Tensor>* outputs) {
+  VLOG(1) << "GraphRunner::Run::graph: \n" << graph->ToGraphDefDebug().DebugString();
   if (device_ == nullptr) {
     return errors::NotFound("Cannot find a device for GraphRunner.");
   }

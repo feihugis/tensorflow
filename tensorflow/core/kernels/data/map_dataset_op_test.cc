@@ -12,23 +12,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-
-#include "tensorflow/core/framework/dataset.h"
-#include "tensorflow/core/framework/fake_input.h"
-#include "tensorflow/core/framework/function.h"
-#include "tensorflow/core/framework/function_handle_cache.h"
-#include "tensorflow/core/framework/function_testlib.h"
-#include "tensorflow/core/framework/node_def_builder.h"
-#include "tensorflow/core/framework/partial_tensor_shape.h"
-#include "tensorflow/core/framework/variant.h"
-#include "tensorflow/core/framework/variant_tensor_data.h"
+//
+//#include "tensorflow/core/framework/dataset.h"
+//#include "tensorflow/core/framework/fake_input.h"
+//#include "tensorflow/core/framework/function.h"
+//#include "tensorflow/core/framework/function_handle_cache.h"
+//#include "tensorflow/core/framework/function_testlib.h"
+//#include "tensorflow/core/framework/node_def_builder.h"
+//#include "tensorflow/core/framework/partial_tensor_shape.h"
+//#include "tensorflow/core/framework/variant.h"
+//#include "tensorflow/core/framework/variant_tensor_data.h"
 #include "tensorflow/core/kernels/data/dataset_test_base.h"
-#include "tensorflow/core/kernels/data/dataset_utils.h"
-#include "tensorflow/core/kernels/data/iterator_ops.h"
-#include "tensorflow/core/kernels/data/stats_utils.h"
-#include "tensorflow/core/kernels/ops_testutil.h"
-#include "tensorflow/core/platform/test.h"
-#include "tensorflow/core/util/ptr_util.h"
+//#include "tensorflow/core/kernels/data/dataset_utils.h"
+//#include "tensorflow/core/kernels/data/iterator_ops.h"
+//#include "tensorflow/core/kernels/data/stats_utils.h"
+//#include "tensorflow/core/kernels/ops_testutil.h"
+//#include "tensorflow/core/platform/test.h"
+//#include "tensorflow/core/util/ptr_util.h"
 
 namespace tensorflow {
 namespace data {

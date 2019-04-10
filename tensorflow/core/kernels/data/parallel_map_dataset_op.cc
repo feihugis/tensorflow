@@ -244,6 +244,7 @@ class ParallelMapDatasetOp : public UnaryDatasetOpKernel {
               ctx, std::move(input_element), result, std::move(done), prefix);
         };
         if (!dataset_->use_inter_op_parallelism_) {
+          VLOG(5) << "****** ParallelMapDatasetOp::Dataset::ParallelMapDatasetFunctor::MapFunc::!dataset_->use_inter_op_parallelism_";
           (*ctx->runner())(std::bind(map_func, ctx, prefix,
                                      std::move(input_element), result,
                                      std::move(done)));

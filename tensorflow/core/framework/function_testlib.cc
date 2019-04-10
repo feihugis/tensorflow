@@ -297,6 +297,24 @@ FunctionDef XTimesFour() {
       {{"y", "y:y:0"}});
 }
 
+FunctionDef XTimesEight() {
+  return FDH::Create(
+      // Name
+      "XTimesEight",
+      // Args
+      {"x: T"},
+      // Return values
+      {"y: T"},
+      // Attr def
+      {"T: {float, double, int32, int64}"},
+      // Nodes
+      {
+          {{"x2"}, "XTimesFour", {"x"}, {{"T", "$T"}}},
+          {{"y"}, "XTimesTwo", {"x2:y:0"}, {{"T", "$T"}}},
+      },
+      {{"y", "y:y:0"}});
+}
+
 FunctionDef XTimes16() {
   return FDH::Create(
       // Name

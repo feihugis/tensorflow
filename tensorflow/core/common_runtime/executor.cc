@@ -785,6 +785,7 @@ Status InferAllocAttr(const Node* n, const Node* dst,
   Status s;
   // Note that it's possible for *n to be a Recv and *dst to be a Send,
   // so these two cases are not mutually exclusive.
+  VLOG(2) << "node_n: " << SummarizeNode(*n) << "; node_dst: " << SummarizeNode(*dst);
   if (IsRecv(n)) {
     string src_name;
     s = GetNodeAttr(n->attrs(), "send_device", &src_name);
@@ -1504,6 +1505,8 @@ void ExecutorImpl::InitializePending(const Graph* graph,
 
 void ExecutorState::RunAsync(Executor::DoneCallback done) {
   const Graph* graph = impl_->graph_.get();
+  VLOG(2) << "Start ExecutorState::RunAsync: run graph = \n"
+          << graph->ToGraphDefDebug().DebugString();
   TaggedNodeSeq ready;
 
   // Ask the device to fill in the device context map.
@@ -1518,6 +1521,7 @@ void ExecutorState::RunAsync(Executor::DoneCallback done) {
 
   // Initialize the ready queue.
   for (const Node* n : impl_->root_nodes_) {
+    VLOG(2) << "ExecutorState::RunAsync::root_node: "<< SummarizeNode(*n);
     DCHECK_EQ(n->in_edges().size(), 0);
     ready.push_back(TaggedNode{n, root_frame_, 0, false});
   }
@@ -1531,6 +1535,8 @@ void ExecutorState::RunAsync(Executor::DoneCallback done) {
     // Schedule to run all the ready ops in thread pool.
     ScheduleReady(ready, nullptr);
   }
+
+  VLOG(2) << "Finish ExecutorState::RunAsync";
 }
 
 // State kept alive for executing an asynchronous node in another
@@ -1607,6 +1613,8 @@ bool MightTrace(const NodeItem& item,
 }
 
 void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_nsec) {
+  VLOG(2) << "Start ExecutorState::Process::tagged_node: "
+          << SummarizeNode(*tagged_node.node);
   WithContext wc(context_);
   const GraphView& gview = impl_->gview_;
   TaggedNodeSeq ready;
@@ -1872,6 +1880,9 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_nsec) {
       completed = NodeDone(s, item.node, ready, stats, &inline_ready);
     }
   }  // while !inline_ready.empty()
+
+  VLOG(2) << "ExecutorState::Process::completed: " << completed
+          << "; num_deferred_ops_: " << num_deferred_ops_;
 
   // This thread of computation is done if completed = true.
   if (completed) ScheduleFinish();
@@ -2254,8 +2265,8 @@ bool ExecutorState::NodeDone(const Status& s, const Node* node,
 
 void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
                                   TaggedNodeReadyQueue* inline_ready) {
+  VLOG(2) << "Start ExecutorState::ScheduleReady";
   if (ready.empty()) return;
-
   int64 scheduled_nsec = 0;
   if (stats_collector_) {
     scheduled_nsec = nodestats::NowInNsec();
@@ -2264,6 +2275,8 @@ void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
   if (inline_ready == nullptr) {
     // Schedule to run all the ready ops in thread pool.
     for (auto& tagged_node : ready) {
+      VLOG(2) << "ExecutorState::ScheduleReady::tagged_node: "
+              << SummarizeNode(*tagged_node.node);
       runner_([=]() { Process(tagged_node, scheduled_nsec); });
     }
     return;
@@ -2504,12 +2517,15 @@ void ExecutorState::Finish() {
     // devices like GPUs that continue to execute Ops after their Compute
     // methods have completed, this ensures that control is not returned to
     // the user until the step (and its side-effects) has actually completed.
+    VLOG(2) << "ExecutorState::Finish(): Block until the device has finished "
+               "all queued operations";
     device->Sync([=](Status new_status) mutable {
       status.Update(new_status);
       delete this;
       runner([=]() { done_cb(status); });
     });
   } else {
+    VLOG(2) << "ExecutorState::Finish(): delete this executor_state";
     delete this;
     runner([=]() { done_cb(status); });
   }
@@ -2841,6 +2857,7 @@ bool ExecutorState::FrameState::CleanupIterations(const GraphView* gview,
 }
 
 void ExecutorImpl::RunAsync(const Args& args, DoneCallback done) {
+  VLOG(4) << "Start ExecutorImpl::RunAsync";
   (new ExecutorState(args, this))->RunAsync(std::move(done));
 }
 
