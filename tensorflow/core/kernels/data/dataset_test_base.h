@@ -31,6 +31,7 @@ limitations under the License.
 #include "tensorflow/core/graph/graph_constructor.h"
 #include "tensorflow/core/kernels/data/dataset_utils.h"
 #include "tensorflow/core/kernels/data/iterator_ops.h"
+#include "tensorflow/core/kernels/data/map_dataset_op.h"
 #include "tensorflow/core/kernels/data/name_utils.h"
 #include "tensorflow/core/kernels/data/range_dataset_op.h"
 #include "tensorflow/core/kernels/data/take_dataset_op.h"
@@ -101,21 +102,67 @@ std::vector<Tensor> CreateTensors(
   return result;
 }
 
+enum class DatasetParamsType {
+  BatchDatasetParams = 0,
+  MapDatasetParams = 1,
+  RangeDatasetParams = 2
+};
+
+string ToString(const DatasetParamsType& dataset_params_type);
+
 class DatasetParams {
  public:
   DatasetParams(DataTypeVector output_dtypes,
-                std::vector<PartialTensorShape> output_shapes, string node_name)
+                std::vector<PartialTensorShape> output_shapes, string node_name,
+                DatasetParamsType type)
       : output_dtypes(std::move(output_dtypes)),
         output_shapes(std::move(output_shapes)),
-        node_name(std::move(node_name)) {}
+        node_name(std::move(node_name)),
+        type(std::move(type)) {}
 
   virtual Status MakeInputs(gtl::InlinedVector<TensorValue, 4>* inputs) = 0;
+
+  virtual std::vector<FunctionDef> GetFuncLib() { return {}; }
 
   virtual ~DatasetParams() {}
 
   DataTypeVector output_dtypes;
   std::vector<PartialTensorShape> output_shapes;
   string node_name;
+  DatasetParamsType type;
+  string iterator_prefix = "Iterator";
+};
+
+template <typename T>
+class UnaryDatasetParams : public DatasetParams {
+ public:
+  UnaryDatasetParams(T input_dataset_params, DataTypeVector output_dtypes,
+                     std::vector<PartialTensorShape> output_shapes,
+                     string node_name, DatasetParamsType type)
+      : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
+                      std::move(node_name), std::move(type)),
+        input_dataset_params(std::move(input_dataset_params)) {}
+
+  T input_dataset_params;
+  Tensor input_dataset;
+};
+
+template <typename T, typename K>
+class BinaryDatasetParams : public DatasetParams {
+ public:
+  BinaryDatasetParams(T input_dataset_params_0, K input_dataset_params_1,
+                      DataTypeVector output_dtypes,
+                      std::vector<PartialTensorShape> output_shapes,
+                      string node_name, DatasetParamsType type)
+      : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
+                      std::move(node_name), std::move(type)),
+        input_dataset_params_0(std::move(input_dataset_params_0)),
+        input_dataset_params_1(std::move(input_dataset_params_1)) {}
+
+  T input_dataset_params_0;
+  K input_dataset_params_1;
+  Tensor input_dataset_0;
+  Tensor input_dataset_1;
 };
 
 class RangeDatasetParams : public DatasetParams {
@@ -125,7 +172,15 @@ class RangeDatasetParams : public DatasetParams {
                      std::vector<PartialTensorShape> output_shapes,
                      string node_name)
       : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
-                      std::move(node_name)),
+                      std::move(node_name),
+                      DatasetParamsType::RangeDatasetParams),
+        start(CreateTensor<int64>(TensorShape({}), {start})),
+        stop(CreateTensor<int64>(TensorShape({}), {stop})),
+        step(CreateTensor<int64>(TensorShape({}), {step})) {}
+
+  RangeDatasetParams(int64 start, int64 stop, int64 step)
+      : DatasetParams({DT_INT64}, {PartialTensorShape({})}, "",
+                      DatasetParamsType::RangeDatasetParams),
         start(CreateTensor<int64>(TensorShape({}), {start})),
         stop(CreateTensor<int64>(TensorShape({}), {stop})),
         step(CreateTensor<int64>(TensorShape({}), {step})) {}
@@ -138,6 +193,82 @@ class RangeDatasetParams : public DatasetParams {
   Tensor start;
   Tensor stop;
   Tensor step;
+  DatasetParamsType type = DatasetParamsType::RangeDatasetParams;
+};
+
+class BatchDatasetParams : public UnaryDatasetParams<RangeDatasetParams> {
+ public:
+  BatchDatasetParams(RangeDatasetParams range_dataset_params, int64 batch_size,
+                     bool drop_remainder, bool parallel_copy,
+                     DataTypeVector output_dtypes,
+                     std::vector<PartialTensorShape> output_shapes,
+                     string node_name)
+      : UnaryDatasetParams(std::move(range_dataset_params),
+                           std::move(output_dtypes), std::move(output_shapes),
+                           std::move(node_name),
+                           DatasetParamsType::BatchDatasetParams),
+        batch_size(CreateTensor<int64>(TensorShape({}), {batch_size})),
+        drop_remainder(CreateTensor<bool>(TensorShape({}), {drop_remainder})),
+        parallel_copy(parallel_copy) {}
+
+  Status MakeInputs(gtl::InlinedVector<TensorValue, 4>* inputs) override {
+    if (input_dataset.NumElements() == 0 ||
+        input_dataset.dtype() != DT_VARIANT) {
+      return errors::Internal(
+          "The input dataset is not populated as the dataset tensor yet.");
+    }
+    *inputs = {TensorValue(&input_dataset), TensorValue(&batch_size),
+               TensorValue(&drop_remainder)};
+    return Status::OK();
+  }
+
+  Tensor batch_size;
+  Tensor drop_remainder;
+  bool parallel_copy;
+};
+
+class MapDatasetParams : public UnaryDatasetParams<RangeDatasetParams> {
+ public:
+  MapDatasetParams(RangeDatasetParams range_dataset_params,
+                   std::vector<Tensor> other_arguments,
+                   FunctionDefHelper::AttrValueWrapper func,
+                   std::vector<FunctionDef> func_lib,
+                   DataTypeVector type_arguments, DataTypeVector output_dtypes,
+                   std::vector<PartialTensorShape> output_shapes,
+                   bool use_inter_op_parallelism, bool preserve_cardinality,
+                   string node_name)
+      : UnaryDatasetParams(std::move(range_dataset_params),
+                           std::move(output_dtypes), std::move(output_shapes),
+                           std::move(node_name),
+                           DatasetParamsType::MapDatasetParams),
+        other_arguments(std::move(other_arguments)),
+        func(std::move(func)),
+        func_lib(std::move(func_lib)),
+        type_arguments(std::move(type_arguments)),
+        use_inter_op_parallelism(use_inter_op_parallelism),
+        preserve_cardinality(preserve_cardinality) {}
+
+  Status MakeInputs(gtl::InlinedVector<TensorValue, 4>* inputs) override {
+    if (input_dataset.NumElements() == 0 ||
+        input_dataset.dtype() != DT_VARIANT) {
+      return tensorflow::errors::Internal(
+          "The input dataset is not populated as the dataset tensor yet.");
+    }
+    *inputs = {TensorValue(&input_dataset)};
+    for (auto& argument : other_arguments) {
+      inputs->emplace_back(TensorValue(&argument));
+    }
+    return Status::OK();
+  }
+
+  std::vector<FunctionDef> GetFuncLib() override { return func_lib; }
+
+  std::vector<Tensor> other_arguments;
+  FunctionDefHelper::AttrValueWrapper func;
+  std::vector<FunctionDef> func_lib;
+  DataTypeVector type_arguments;
+  bool use_inter_op_parallelism;
+  bool preserve_cardinality;
 };
 
 template <typename T>
@@ -316,6 +447,60 @@ class DatasetOpsTestBase : public ::testing::Test {
                                   std::vector<Tensor>* const components,
                                   DatasetBase** tensor_slice_dataset);
 
+  Status MakeInputDatasets(DatasetParams* dataset_params) {
+    switch (dataset_params->type) {
+      case DatasetParamsType::RangeDatasetParams:
+        break;
+      case DatasetParamsType::MapDatasetParams: {
+        auto map_dataset_params =
+            dynamic_cast<MapDatasetParams*>(dataset_params);
+        TF_RETURN_IF_ERROR(
+            MakeDataset(&map_dataset_params->input_dataset_params,
+                        &map_dataset_params->input_dataset));
+        break;
+      }
+      case DatasetParamsType::BatchDatasetParams: {
+        auto batch_dataset_params =
+            dynamic_cast<BatchDatasetParams*>(dataset_params);
+        TF_RETURN_IF_ERROR(
+            MakeDataset(&batch_dataset_params->input_dataset_params,
+                        &batch_dataset_params->input_dataset));
+        break;
+      }
+      default:
+        return errors::Internal("MakeInputDatasets() does not support ",
+                                ToString(dataset_params->type), " yet.");
+    }
+    return Status::OK();
+  }
+
+  Status MakeDataset(DatasetParams* dataset_params, Tensor* dataset_tensor) {
+    switch (dataset_params->type) {
+      case DatasetParamsType::RangeDatasetParams: {
+        auto range_dataset_params =
+            dynamic_cast<RangeDatasetParams*>(dataset_params);
+        TF_RETURN_IF_ERROR(
+            MakeRangeDataset(*range_dataset_params, dataset_tensor));
+        break;
+      }
+      case DatasetParamsType::MapDatasetParams: {
+        auto map_dataset_params =
+            dynamic_cast<MapDatasetParams*>(dataset_params);
+        TF_RETURN_IF_ERROR(
+            MakeDataset(&map_dataset_params->input_dataset_params,
+                        &map_dataset_params->input_dataset));
+        TF_RETURN_IF_ERROR(MakeMapDataset(*map_dataset_params, dataset_tensor));
+      }
+      default:
+        return errors::Internal("MakeDataset() does not support ",
+                                ToString(dataset_params->type), " yet.");
+    }
+    return Status::OK();
+  }
+
+  Status MakeMapDataset(const MapDatasetParams& map_dataset_params,
+                        Tensor* map_dataset);
+
   // Creates a `RangeDataset` dataset as a variant tensor.
   Status MakeRangeDataset(const Tensor& start, const Tensor& stop,
                           const Tensor& step,
@@ -470,8 +655,223 @@ template <typename T>
 class DatasetOpsTestBaseV2 : public DatasetOpsTestBase {
  public:
   // Initializes the required members for running the unit tests.
-  virtual Status Initialize(T* dataset_params) = 0;
+  virtual Status Initialize(T* dataset_params) {
+    {
+      TF_RETURN_IF_ERROR(InitThreadPool(thread_num_));
+      TF_RETURN_IF_ERROR(
+          InitFunctionLibraryRuntime(dataset_params->GetFuncLib(), cpu_num_));
+
+      TF_RETURN_IF_ERROR(
+          MakeDatasetOpKernel(*dataset_params, &dataset_kernel_));
+      TF_RETURN_IF_ERROR(MakeInputDatasets(dataset_params));
+      gtl::InlinedVector<TensorValue, 4> inputs;
+      TF_RETURN_IF_ERROR(dataset_params->MakeInputs(&inputs));
+      TF_RETURN_IF_ERROR(
+          CreateDatasetContext(dataset_kernel_.get(), &inputs, &dataset_ctx_));
+      TF_RETURN_IF_ERROR(
+          CreateDataset(dataset_kernel_.get(), dataset_ctx_.get(), &dataset_));
+      TF_RETURN_IF_ERROR(
+          CreateIteratorContext(dataset_ctx_.get(), &iterator_ctx_));
+      TF_RETURN_IF_ERROR(dataset_->MakeIterator(
+          iterator_ctx_.get(), dataset_params->iterator_prefix, &iterator_));
+      return Status::OK();
+    }
+  }
+
+  virtual Status MakeDatasetOpKernel(
+      const T& dataset_params, std::unique_ptr<OpKernel>* dataset_kernel) = 0;
 };
+
+#define ITERATOR_GET_NEXT_TEST_P(test_class, dataset_params_class,            \
+                                 test_case_generator)                         \
+  class ParameterizedGetNextTest                                              \
+      : public test_class,                                                    \
+        public ::testing::WithParamInterface<                                 \
+            GetNextTestCase<dataset_params_class>> {};                        \
+                                                                              \
+  TEST_P(ParameterizedGetNextTest, GetNext) {                                 \
+    auto test_case = GetParam();                                              \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                      \
+    TF_ASSERT_OK(CheckIteratorGetNext(test_case.expected_outputs,             \
+                                      /*compare_order=*/true));               \
+  }                                                                           \
+                                                                              \
+  INSTANTIATE_TEST_SUITE_P(                                                   \
+      test_class, ParameterizedGetNextTest,                                   \
+      ::testing::ValuesIn(std::vector<GetNextTestCase<dataset_params_class>>( \
+          test_case_generator)));
+
+#define DATASET_NODE_NAME_TEST_P(test_class, dataset_params_class,    \
+                                 test_case_generator)                 \
+  class ParameterizedDatasetNodeNameTest                              \
+      : public test_class,                                            \
+        public ::testing::WithParamInterface<                         \
+            DatasetNodeNameTestCase<dataset_params_class>> {};        \
+                                                                      \
+  TEST_P(ParameterizedDatasetNodeNameTest, DatasetNodeName) {         \
+    auto test_case = GetParam();                                      \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));              \
+    TF_ASSERT_OK(CheckDatasetNodeName(test_case.expected_node_name)); \
+  }                                                                   \
+                                                                      \
+  INSTANTIATE_TEST_SUITE_P(                                           \
+      test_class, ParameterizedDatasetNodeNameTest,                   \
+      ::testing::ValuesIn(                                            \
+          std::vector<DatasetNodeNameTestCase<dataset_params_class>>( \
+              test_case_generator)));
+
+#define DATASET_TYPE_STRING_TEST_P(test_class, dataset_params_class,     \
+                                   test_case_generator)                  \
+  class ParameterizedDatasetTypeStringTest                               \
+      : public test_class,                                               \
+        public ::testing::WithParamInterface<                            \
+            DatasetTypeStringTestCase<dataset_params_class>> {};         \
+                                                                         \
+  TEST_P(ParameterizedDatasetTypeStringTest, DatasetTypeString) {        \
+    auto test_case = GetParam();                                         \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                 \
+    TF_ASSERT_OK(                                                        \
+        CheckDatasetTypeString(test_case.expected_dataset_type_string)); \
+  }                                                                      \
+                                                                         \
+  INSTANTIATE_TEST_SUITE_P(                                              \
+      test_class, ParameterizedDatasetTypeStringTest,                    \
+      ::testing::ValuesIn(                                               \
+          std::vector<DatasetTypeStringTestCase<dataset_params_class>>(  \
+              test_case_generator)));
+
+#define DATASET_OUTPUT_DTYPES_TEST_P(test_class, dataset_params_class,        \
+                                     test_case_generator)                     \
+                                                                              \
+  class ParameterizedDatasetOutputDtypesTest                                  \
+      : public test_class,                                                    \
+        public ::testing::WithParamInterface<                                 \
+            DatasetOutputDtypesTestCase<dataset_params_class>> {};            \
+                                                                              \
+  TEST_P(ParameterizedDatasetOutputDtypesTest, DatasetOutputDtypes) {         \
+    auto test_case = GetParam();                                              \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                      \
+    TF_ASSERT_OK(CheckDatasetOutputDtypes(test_case.expected_output_dtypes)); \
+  }                                                                           \
+                                                                              \
+  INSTANTIATE_TEST_SUITE_P(                                                   \
+      test_class, ParameterizedDatasetOutputDtypesTest,                       \
+      ::testing::ValuesIn(                                                    \
+          std::vector<DatasetOutputDtypesTestCase<dataset_params_class>>(     \
+              test_case_generator)));
+
+#define DATASET_OUTPUT_SHAPES_TEST_P(test_class, dataset_params_class,        \
+                                     test_case_generator)                     \
+                                                                              \
+  class ParameterizedDatasetOutputShapesTest                                  \
+      : public test_class,                                                    \
+        public ::testing::WithParamInterface<                                 \
+            DatasetOutputShapesTestCase<dataset_params_class>> {};            \
+                                                                              \
+  TEST_P(ParameterizedDatasetOutputShapesTest, DatasetOutputShapes) {         \
+    auto test_case = GetParam();                                              \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                      \
+    TF_ASSERT_OK(CheckDatasetOutputShapes(test_case.expected_output_shapes)); \
+  }                                                                           \
+                                                                              \
+  INSTANTIATE_TEST_SUITE_P(                                                   \
+      test_class, ParameterizedDatasetOutputShapesTest,                       \
+      ::testing::ValuesIn(                                                    \
+          std::vector<DatasetOutputShapesTestCase<dataset_params_class>>(     \
+              test_case_generator)));
+
+#define DATASET_CARDINALITY_TEST_P(test_class, dataset_params_class,       \
+                                   test_case_generator)                    \
+                                                                           \
+  class ParameterizedCardinalityTest                                       \
+      : public test_class,                                                 \
+        public ::testing::WithParamInterface<                              \
+            CardinalityTestCase<dataset_params_class>> {};                 \
+                                                                           \
+  TEST_P(ParameterizedCardinalityTest, Cardinality) {                      \
+    auto test_case = GetParam();                                           \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                   \
+    TF_ASSERT_OK(CheckDatasetCardinality(test_case.expected_cardinality)); \
+  }                                                                        \
+                                                                           \
+  INSTANTIATE_TEST_SUITE_P(                                                \
+      test_class, ParameterizedCardinalityTest,                            \
+      ::testing::ValuesIn(                                                 \
+          std::vector<CardinalityTestCase<dataset_params_class>>(          \
+              test_case_generator)));
+
+#define ITERATOR_OUTPUT_DTYPES_TEST_P(test_class, dataset_params_class,       \
+                                      test_case_generator)                    \
+  class ParameterizedIteratorOutputDtypesTest                                 \
+      : public test_class,                                                    \
+        public ::testing::WithParamInterface<                                 \
+            IteratorOutputDtypesTestCase<dataset_params_class>> {};           \
+                                                                              \
+  TEST_P(ParameterizedIteratorOutputDtypesTest, IteratorOutputDtypes) {       \
+    auto test_case = GetParam();                                              \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                      \
+    TF_ASSERT_OK(CheckDatasetOutputDtypes(test_case.expected_output_dtypes)); \
+  }                                                                           \
+                                                                              \
+  INSTANTIATE_TEST_SUITE_P(                                                   \
+      test_class, ParameterizedIteratorOutputDtypesTest,                      \
+      ::testing::ValuesIn(                                                    \
+          std::vector<IteratorOutputDtypesTestCase<dataset_params_class>>(    \
+              test_case_generator)));
+
+#define ITERATOR_OUTPUT_SHAPES_TEST_P(test_class, dataset_params_class,        \
+                                      test_case_generator)                     \
+  class ParameterizedIteratorOutputShapesTest                                  \
+      : public test_class,                                                     \
+        public ::testing::WithParamInterface<                                  \
+            IteratorOutputShapesTestCase<dataset_params_class>> {};            \
+                                                                               \
+  TEST_P(ParameterizedIteratorOutputShapesTest, IteratorOutputShapes) {        \
+    auto test_case = GetParam();                                               \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                       \
+    TF_ASSERT_OK(CheckIteratorOutputShapes(test_case.expected_output_shapes)); \
+  }                                                                            \
+                                                                               \
+  INSTANTIATE_TEST_SUITE_P(                                                    \
+      test_class, ParameterizedIteratorOutputShapesTest,                       \
+      ::testing::ValuesIn(                                                     \
+          std::vector<IteratorOutputShapesTestCase<dataset_params_class>>(     \
+              test_case_generator)));
+
+#define ITERATOR_PREFIX_TEST_P(test_class, test_case_class,                \
+                               test_case_generator)                        \
+  class ParameterizedIteratorPrefixTest                                    \
+      : public test_class,                                                 \
+        public ::testing::WithParamInterface<                              \
+            IteratorPrefixTestCase<test_case_class>> {};                   \
+                                                                           \
+  TEST_P(ParameterizedIteratorPrefixTest, IteratorPrefix) {                \
+    auto test_case = GetParam();                                           \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                   \
+    TF_ASSERT_OK(CheckIteratorPrefix(test_case.expected_iterator_prefix)); \
+  }                                                                        \
+                                                                           \
+  INSTANTIATE_TEST_SUITE_P(                                                \
+      test_class, ParameterizedIteratorPrefixTest,                         \
+      ::testing::ValuesIn(                                                 \
+          std::vector<IteratorPrefixTestCase<test_case_class>>(            \
+              test_case_generator)));
+
+#define ITERATOR_SAVE_AND_RESTORE_TEST_P(test_class, test_case_class,         \
+                                         test_case_generator)                 \
+  class ParameterizedIteratorSaveAndRestoreTest                               \
+      : public test_class,                                                    \
+        public ::testing::WithParamInterface<test_case_class> {};             \
+  TEST_P(ParameterizedIteratorSaveAndRestoreTest, IteratorSaveAndRestore) {   \
+    auto test_case = GetParam();                                              \
+    TF_ASSERT_OK(Initialize(&test_case.dataset_params));                      \
+    TF_ASSERT_OK(CheckIteratorSaveAndRestore(                                 \
+        test_case.dataset_params.iterator_prefix, test_case.expected_outputs, \
+        test_case.breakpoints));                                              \
+  }                                                                           \
+  INSTANTIATE_TEST_SUITE_P(                                                   \
+      test_class, ParameterizedIteratorSaveAndRestoreTest,                    \
+      ::testing::ValuesIn(std::vector<test_case_class>(test_case_generator)));
 
 }  // namespace data
 }  // namespace tensorflow

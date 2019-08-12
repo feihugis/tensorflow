@@ -24,31 +24,11 @@ constexpr char kNodeName[] = "range_dataset";
 constexpr char kIteratorPrefix[] = "Iterator";
 
 class RangeDatasetOpTest : public DatasetOpsTestBaseV2<RangeDatasetParams> {
- public:
-  Status Initialize(RangeDatasetParams* range_dataset_params) override {
-    TF_RETURN_IF_ERROR(InitThreadPool(thread_num_));
-    TF_RETURN_IF_ERROR(InitFunctionLibraryRuntime({}, cpu_num_));
-
-    TF_RETURN_IF_ERROR(
-        CreateRangeDatasetOpKernel(*range_dataset_params, &dataset_kernel_));
-    gtl::InlinedVector<TensorValue, 4> inputs;
-    TF_RETURN_IF_ERROR(range_dataset_params->MakeInputs(&inputs));
-    TF_RETURN_IF_ERROR(
-        CreateDatasetContext(dataset_kernel_.get(), &inputs, &dataset_ctx_));
-    TF_RETURN_IF_ERROR(
-        CreateDataset(dataset_kernel_.get(), dataset_ctx_.get(), &dataset_));
-    TF_RETURN_IF_ERROR(
-        CreateIteratorContext(dataset_ctx_.get(), &iterator_ctx_));
-    TF_RETURN_IF_ERROR(dataset_->MakeIterator(iterator_ctx_.get(),
-                                              kIteratorPrefix, &iterator_));
-    return Status::OK();
-  }
-
  protected:
   // Creates a new `BatchDataset` op kernel.
-  Status CreateRangeDatasetOpKernel(
+  Status MakeDatasetOpKernel(
       const RangeDatasetParams& dataset_params,
-      std::unique_ptr<OpKernel>* range_dataset_op_kernel) {
+      std::unique_ptr<OpKernel>* range_dataset_op_kernel) override {
     NodeDef node_def = test::function::NDef(
         dataset_params.node_name,
         name_utils::OpName(RangeDatasetOp::kDatasetType),

@@ -23,79 +23,11 @@ namespace {
 constexpr char kNodeName[] = "map_dataset";
 constexpr char kIteratorPrefix[] = "Iterator";
 
-class MapDatasetParams : public DatasetParams {
- public:
-  MapDatasetParams(int64 start, int64 stop, int64 step,
-                   std::vector<Tensor> other_arguments,
-                   FunctionDefHelper::AttrValueWrapper func,
-                   std::vector<FunctionDef> func_lib,
-                   DataTypeVector type_arguments, DataTypeVector output_dtypes,
-                   std::vector<PartialTensorShape> output_shapes,
-                   bool use_inter_op_parallelism, bool preserve_cardinality,
-                   string node_name)
-      : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
-                      std::move(node_name)),
-        range_dataset_params(start, stop, step, {DT_INT64},
-                             {PartialTensorShape({})}, ""),
-        other_arguments(std::move(other_arguments)),
-        func(std::move(func)),
-        func_lib(std::move(func_lib)),
-        type_arguments(std::move(type_arguments)),
-        use_inter_op_parallelism(use_inter_op_parallelism),
-        preserve_cardinality(preserve_cardinality) {}
-
-  Status MakeInputs(gtl::InlinedVector<TensorValue, 4>* inputs) override {
-    if (input_dataset.NumElements() == 0 ||
-        input_dataset.dtype() != DT_VARIANT) {
-      return tensorflow::errors::Internal(
-          "The input dataset is not populated as the dataset tensor yet.");
-    }
-    *inputs = {TensorValue(&input_dataset)};
-    for (auto& argument : other_arguments) {
-      inputs->emplace_back(TensorValue(&argument));
-    }
-    return Status::OK();
-  }
-
-  RangeDatasetParams range_dataset_params;
-  Tensor input_dataset;
-  std::vector<Tensor> other_arguments;
-  FunctionDefHelper::AttrValueWrapper func;
-  std::vector<FunctionDef> func_lib;
-  DataTypeVector type_arguments;
-  bool use_inter_op_parallelism;
-  bool preserve_cardinality;
-};
-
 class MapDatasetOpTest : public DatasetOpsTestBaseV2<MapDatasetParams> {
- public:
-  Status Initialize(MapDatasetParams* map_dataset_params) override {
-    TF_RETURN_IF_ERROR(InitThreadPool(thread_num_));
-    TF_RETURN_IF_ERROR(
-        InitFunctionLibraryRuntime(map_dataset_params->func_lib, cpu_num_));
-
-    TF_RETURN_IF_ERROR(
-        CreateMapDatasetOpKernel(*map_dataset_params, &dataset_kernel_));
-    TF_RETURN_IF_ERROR(
-        MakeRangeDataset(map_dataset_params->range_dataset_params,
-                         &map_dataset_params->input_dataset));
-    gtl::InlinedVector<TensorValue, 4> inputs;
-    TF_RETURN_IF_ERROR(map_dataset_params->MakeInputs(&inputs));
-    TF_RETURN_IF_ERROR(
-        CreateDatasetContext(dataset_kernel_.get(), &inputs, &dataset_ctx_));
-    TF_RETURN_IF_ERROR(
-        CreateDataset(dataset_kernel_.get(), dataset_ctx_.get(), &dataset_));
-    TF_RETURN_IF_ERROR(
-        CreateIteratorContext(dataset_ctx_.get(), &iterator_ctx_));
-    TF_RETURN_IF_ERROR(dataset_->MakeIterator(iterator_ctx_.get(),
-                                              kIteratorPrefix, &iterator_));
-    return Status::OK();
-  }
-
  protected:
   // Creates a new MapDataset op kernel.
-  Status CreateMapDatasetOpKernel(const MapDatasetParams& map_dataset_params,
-                                  std::unique_ptr<OpKernel>* map_kernel) {
+  Status MakeDatasetOpKernel(const MapDatasetParams& map_dataset_params,
+                             std::unique_ptr<OpKernel>* map_kernel) override {
     NodeDef map_dataset_node_def = test::function::NDef(
         map_dataset_params.node_name,
         name_utils::OpName(MapDatasetOp::kDatasetType),
@@ -114,9 +46,7 @@ class MapDatasetOpTest : public DatasetOpsTestBaseV2<MapDatasetParams> {
 };
 
 MapDatasetParams MapDatasetParams1() {
-  return {/*start=*/0,
-          /*stop=*/10,
-          /*step=*/3,
+  return {{/*start=*/0, /*stop=*/10, /*step=*/3},
           /*other_arguments=*/{},
           /*func=*/
           FunctionDefHelper::FunctionRef("XTimesTwo", {{"T", DT_INT64}}),
@@ -130,9 +60,7 @@ MapDatasetParams MapDatasetParams1() {
 }
 
 MapDatasetParams MapDatasetParams2() {
-  return {/*start=*/10,
-          /*stop=*/0,
-          /*step=*/-3,
+  return {{/*start=*/10, /*stop=*/0, /*step=*/-3},
           /*other_arguments=*/{},
           /*func=*/
           FunctionDefHelper::FunctionRef("XAddX", {{"T", DT_INT64}}),
@@ -149,9 +77,7 @@ MapDatasetParams MapDatasetParams2() {
 // both of them are added to the function library.
 MapDatasetParams MapDatasetParams3() {
   return {
-      /*start=*/0,
-      /*stop=*/10,
-      /*step=*/3,
+      {/*start=*/0, /*stop=*/10, /*step=*/3},
       /*other_arguments=*/{},
       /*func=*/
       FunctionDefHelper::FunctionRef("XTimesFour", {{"T", DT_INT64}}),

@@ -135,6 +135,12 @@ FunctionDef XYXLessThanOrEqualToN(int64 N);
 // x: T -> bool
 FunctionDef RandomUniformLess();
 
+// input_dataset: variant, other_arguments: Targuments, f: func,
+// Targuments: list(type), output_types: list(type), output_shapes: list(shape),
+// use_inter_op_parallelism: bool, preserve_cardinality: bool
+// -> y: MapDatasetOp::Dataset
+FunctionDef MakeMapDataset();
+
 // start:int64, stop:int64, step:int64 -> y: RangeDatasetOp::Dataset
 FunctionDef MakeRangeDataset();
 

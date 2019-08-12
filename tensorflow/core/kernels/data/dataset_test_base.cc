@@ -36,6 +36,17 @@ string ToString(CompressionType compression_type) {
   }
 }
 
+string ToString(const DatasetParamsType& dataset_params_type) {
+  switch (dataset_params_type) {
+    case DatasetParamsType::BatchDatasetParams:
+      return "BatchDatasetParams";
+    case DatasetParamsType::MapDatasetParams:
+      return "MapDatasetParams";
+    case DatasetParamsType::RangeDatasetParams:
+      return "RangeDatasetParams";
+  }
+}
+
 io::ZlibCompressionOptions GetZlibCompressionOptions(
     CompressionType compression_type) {
   switch (compression_type) {
@@ -290,6 +301,33 @@ Status DatasetOpsTestBase::MakeRangeDataset(
                    {RangeDatasetOp::kOutputShapes, output_shapes}},
                   /*inputs*/ {start, stop, step}, graph_opts,
                   /*rets*/ {range_dataset}));
+  return Status::OK();
+}
+
+// Create a `MapDataset` dataset as a variant tensor.
+Status DatasetOpsTestBase::MakeMapDataset(
+    const MapDatasetParams& map_dataset_params, Tensor* map_dataset) {
+  GraphConstructorOptions graph_opts;
+  graph_opts.allow_internal_ops = true;
+  graph_opts.expect_device_spec = false;
+  std::vector<Tensor> inputs;
+  inputs.reserve(1 + map_dataset_params.other_arguments.size());
+  inputs.push_back(map_dataset_params.input_dataset);
+  inputs.insert(inputs.end(), map_dataset_params.other_arguments.begin(),
+                map_dataset_params.other_arguments.end());
+  TF_RETURN_IF_ERROR(RunFunction(
+      test::function::MakeMapDataset(),
+      /*attrs=*/
+      {{MapDatasetOp::kFunc, map_dataset_params.func},
+       {MapDatasetOp::kTarguments, map_dataset_params.type_arguments},
+       {MapDatasetOp::kOutputTypes, map_dataset_params.output_dtypes},
+       {MapDatasetOp::kOutputShapes, map_dataset_params.output_shapes},
+       {MapDatasetOp::kUseInterOpParallelism,
+        map_dataset_params.use_inter_op_parallelism},
+       {MapDatasetOp::kPreserveCardinality,
+        map_dataset_params.preserve_cardinality}},
+      /*inputs=*/inputs, graph_opts,
+      /*rets*/ {map_dataset}));
   return Status::OK();
 }
 
